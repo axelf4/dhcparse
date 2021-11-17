@@ -74,7 +74,7 @@ impl<'a> Cursor<'a> {
 
     fn write(&mut self, bs: &[u8]) -> Result<(), Error> {
         self.buffer
-            .get_mut(self.index..)
+            .get_mut(self.index..self.index + bs.len())
             .ok_or(Error::Overflow)?
             .copy_from_slice(bs);
         self.index += bs.len();
