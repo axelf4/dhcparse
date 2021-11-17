@@ -76,17 +76,17 @@ impl<'a> RelayAgentInformation<'a> {
         Ok(Self(b))
     }
 
-    pub fn suboptions(&self) -> impl Iterator<Item = Result<SubOption<'_>, Error>> {
+    pub fn suboptions(&self) -> impl Iterator<Item = Result<SubOption<'a>, Error>> {
         SubOptionIter(self.0)
     }
 }
 
 #[cfg(feature = "std")]
-pub fn encode<'a>(iter: impl Iterator<Item = SubOption<'a>>) -> Result<Vec<u8>, Error> {
+pub fn encode<'a>(iter: impl IntoIterator<Item = SubOption<'a>>) -> Result<Vec<u8>, Error> {
     use std::convert::TryInto;
 
     let mut res = Vec::new();
-    for subopt in iter {
+    for subopt in iter.into_iter() {
         res.push(subopt.code());
         match subopt {
             SubOption::AgentCircuitId(b) | SubOption::AgentRemoteId(b) => {
