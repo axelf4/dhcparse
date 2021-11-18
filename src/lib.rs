@@ -235,12 +235,26 @@ pub enum DhcpOption<'a> {
     ExtensionsPath(&'a [u8]),
     /// 19 IP Forwarding Enable/Disable
     IpForwarding(bool),
+    /// 50 Requested IP Address
+    RequestedIpAddress(&'a Addr),
+    /// 51 IP Address Lease Time
+    AddressLeaseTime(u32),
     /// 52 Option Overload
     OptionOverload(OptionOverload),
     /// 53 DHCP Message Type
     ///
     /// This option is required.
     MessageType(MessageType),
+    /// 54 Server Identifier
+    ServerIdentifier(&'a Addr),
+    /// 55 Parameter Request List
+    ParameterRequestList(&'a [u8]),
+    /// 56 Message
+    Message(&'a [u8]),
+    /// 57 Maximum DHCP Message Size
+    MaximumMessageSize(u16),
+    /// 60 Vendor class identifier
+    VendorClassIdentifier(&'a [u8]),
     /// 82 Relay Agent Information
     RelayAgentInformation(relay::RelayAgentInformation<'a>),
     /// Unrecognized option.
@@ -272,8 +286,15 @@ impl DhcpOption<'_> {
             RootPath(_) => 17,
             ExtensionsPath(_) => 18,
             IpForwarding(_) => 19,
+            RequestedIpAddress(_) => 50,
+            AddressLeaseTime(_) => 51,
             OptionOverload(_) => 52,
             MessageType(_) => 53,
+            ServerIdentifier(_) => 54,
+            ParameterRequestList(_) => 55,
+            Message(_) => 56,
+            MaximumMessageSize(_) => 57,
+            VendorClassIdentifier(_) => 60,
             RelayAgentInformation(_) => 82,
             Unknown(code, _) => code,
         }
@@ -336,6 +357,13 @@ impl<'a> DhcpOption<'a> {
                     [x] => IpForwarding(x == 1),
                     _ => return Err(Error::Malformed),
                 },
+                50 => RequestedIpAddress(b.try_into()?),
+                51 => {
+                    if b.len() != 4 {
+                        return Err(Error::Malformed);
+                    }
+                    AddressLeaseTime(NetworkEndian::read_u32(b))
+                }
                 52 => match *b {
                     [x] => {
                         OptionOverload(crate::OptionOverload::from_bits(x).ok_or(Error::Malformed)?)
@@ -346,6 +374,20 @@ impl<'a> DhcpOption<'a> {
                     [x] => MessageType(x.try_into()?),
                     _ => return Err(Error::Malformed),
                 },
+                54 => ServerIdentifier(b.try_into()?),
+                55 => ParameterRequestList(read_str(b)?),
+                56 => Message(read_str(b)?),
+                57 => {
+                    if b.len() != 2 {
+                        return Err(Error::Malformed);
+                    }
+                    let i = NetworkEndian::read_u16(b);
+                    if i < MIN_MESSAGE_SIZE as u16 {
+                        return Err(Error::Malformed);
+                    }
+                    MaximumMessageSize(i)
+                }
+                60 => VendorClassIdentifier(read_str(b)?),
                 82 => RelayAgentInformation(relay::RelayAgentInformation::new(b)?),
                 _ => Unknown(tag, b),
             },
@@ -358,7 +400,10 @@ impl<'a> DhcpOption<'a> {
         cursor.write_u8(self.code())?;
         match *self {
             Pad | End => Ok(()),
-            SubnetMask(addr) | SwapServer(addr) => {
+            SubnetMask(addr)
+            | SwapServer(addr)
+            | RequestedIpAddress(addr)
+            | ServerIdentifier(addr) => {
                 cursor.write_u8(addr.0.len() as u8)?;
                 cursor.write(&addr.0)
             }
@@ -371,6 +416,7 @@ impl<'a> DhcpOption<'a> {
             | LPRServer(addrs)
             | ImpressServer(addrs)
             | ResourceLocationServer(addrs) => {
+                // Safety: Addr has the same representation as [u8; 4]
                 let xs = unsafe { &*(addrs as *const [Addr] as *const [u8]) };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
@@ -381,6 +427,9 @@ impl<'a> DhcpOption<'a> {
             | RootPath(xs)
             | ExtensionsPath(xs)
             | RelayAgentInformation(relay::RelayAgentInformation(xs))
+            | ParameterRequestList(xs)
+            | Message(xs)
+            | VendorClassIdentifier(xs)
             | Unknown(_, xs) => {
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
@@ -393,6 +442,10 @@ impl<'a> DhcpOption<'a> {
                 cursor.write_u8(1)?;
                 cursor.write_u8(if x { 1 } else { 0 })
             }
+            AddressLeaseTime(i) => {
+                cursor.write_u8(4)?;
+                cursor.write(&i.to_be_bytes())
+            }
             OptionOverload(x) => {
                 cursor.write_u8(1)?;
                 cursor.write_u8(x.bits())
@@ -400,6 +453,13 @@ impl<'a> DhcpOption<'a> {
             MessageType(x) => {
                 cursor.write_u8(1)?;
                 cursor.write_u8(x as u8)
+            }
+            MaximumMessageSize(i) => {
+                if i < MIN_MESSAGE_SIZE as u16 {
+                    return Err(Error::Malformed);
+                }
+                cursor.write_u8(2)?;
+                cursor.write(&i.to_be_bytes())
             }
         }
     }
@@ -478,8 +538,8 @@ impl FusedIterator for Options<'_> {}
 
 /// A read/write wrapper around a Dynamic Host Protocol version 4
 /// message buffer.
-#[derive(Clone)]
-pub struct Dhcpv4View<T: AsRef<[u8]>>(T);
+#[derive(Clone, Debug)]
+pub struct Dhcpv4View<T>(T);
 
 impl<T: AsRef<[u8]>> AsRef<[u8]> for Dhcpv4View<T> {
     #[inline]
@@ -492,6 +552,15 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> AsMut<[u8]> for Dhcpv4View<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
         self.0.as_mut()
+    }
+}
+
+impl<T> Dhcpv4View<T> {
+    /// Consumes the view and returns the underlying buffer.
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let Dhcpv4View(inner) = self;
+        inner
     }
 }
 
@@ -508,6 +577,7 @@ impl<T: AsRef<[u8]>> Dhcpv4View<T> {
         Ok(Dhcpv4View(b))
     }
 
+    /// Gets the 'op' field (message type).
     #[inline]
     pub fn op(&self) -> Result<OpCode, Error> {
         self.as_ref()[0].try_into()
@@ -519,6 +589,18 @@ impl<T: AsRef<[u8]>> Dhcpv4View<T> {
         self.as_ref()[2]
     }
 
+    /// Gets the 'hops' field.
+    #[inline]
+    pub fn hops(&self) -> u8 {
+        self.as_ref()[3]
+    }
+
+    /// Gets the transaction ID.
+    #[inline]
+    pub fn xid(&self) -> u32 {
+        NetworkEndian::read_u32(&self.as_ref()[4..])
+    }
+
     /// Gets the 'secs' field.
     ///
     /// This is the number of seconds elapsed since client began
@@ -528,9 +610,16 @@ impl<T: AsRef<[u8]>> Dhcpv4View<T> {
         NetworkEndian::read_u16(&self.as_ref()[8..])
     }
 
+    /// Gets the 'flags' field.
     #[inline]
     pub fn flags(&self) -> Flags {
         Flags::from_bits_truncate(NetworkEndian::read_u16(&self.as_ref()[10..]))
+    }
+
+    /// Gets the 'ciaddr' field (client address).
+    #[inline]
+    pub fn ciaddr(&self) -> &Addr {
+        self.as_ref()[12..].try_into().unwrap()
     }
 
     /// Gets the 'yiaddr' field (your address).
@@ -582,7 +671,7 @@ impl<T: AsRef<[u8]>> Dhcpv4View<T> {
         }
     }
 
-    /// Returns an iterator over DHCP options.
+    /// Returns an iterator over the DHCP options.
     ///
     /// The ['pad'](DhcpOption::Pad) and ['end'](DhcpOption::End)
     /// options are excluded.
@@ -601,10 +690,49 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Dhcpv4View<T> {
         self.as_mut()[0] = op as u8;
     }
 
-    /// Sets the gatewap IP address.
+    /// Returns a mutable reference to the 'hops' field.
+    pub fn hops_mut(&mut self) -> &mut u8 {
+        &mut self.as_mut()[3]
+    }
+
+    /// Sets the 'xid' field.
+    pub fn set_xid(&mut self, xid: u32) {
+        NetworkEndian::write_u32(&mut self.as_mut()[4..], xid)
+    }
+
+    /// Sets the 'secs' field.
+    pub fn set_secs(&mut self, secs: u16) {
+        NetworkEndian::write_u16(&mut self.as_mut()[8..], secs)
+    }
+
+    /// Sets the 'flags' field.
     #[inline]
-    pub fn set_giaddr(&mut self, Addr(giaddr): Addr) {
-        self.as_mut()[24..][..4].copy_from_slice(&giaddr)
+    pub fn set_flags(&mut self, flags: Flags) {
+        NetworkEndian::write_u16(&mut self.as_mut()[10..], flags.bits())
+    }
+
+    /// Returns a mutable reference to the 'ciaddr' field.
+    #[inline]
+    pub fn ciaddr_mut(&mut self) -> &mut Addr {
+        Addr::ref_cast_mut((&mut self.as_mut()[12..][..4]).try_into().unwrap())
+    }
+
+    /// Returns a mutable reference to the 'yiaddr' field.
+    #[inline]
+    pub fn yiaddr_mut(&mut self) -> &mut Addr {
+        Addr::ref_cast_mut((&mut self.as_mut()[16..][..4]).try_into().unwrap())
+    }
+
+    /// Returns a mutable reference to the 'siaddr' field.
+    #[inline]
+    pub fn siaddr_mut(&mut self) -> &mut Addr {
+        Addr::ref_cast_mut((&mut self.as_mut()[20..][..4]).try_into().unwrap())
+    }
+
+    /// Returns a mutable reference to the 'giaddr' field.
+    #[inline]
+    pub fn giaddr_mut(&mut self) -> &mut Addr {
+        Addr::ref_cast_mut((&mut self.as_mut()[24..][..4]).try_into().unwrap())
     }
 
     /// Sets the 'chaddr' field.
@@ -612,7 +740,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Dhcpv4View<T> {
     /// This setter also updates the length stored in the 'hlen' field.
     #[inline]
     pub fn set_chaddr(&mut self, chaddr: &[u8]) -> Result<(), Error> {
-        self.as_mut()[28..][..4]
+        self.as_mut()[28..][..16]
             .get_mut(..chaddr.len())
             .ok_or(Error::TooLong)?
             .copy_from_slice(chaddr);
@@ -826,7 +954,7 @@ mod tests {
 
         let mut view = Dhcpv4View::new(EX_MSG)?;
         let new_giaddr = Ipv4Addr::new(0x31, 0x41, 0x59, 0x26);
-        view.set_giaddr(new_giaddr.into());
+        *view.giaddr_mut() = new_giaddr.into();
         assert_eq!(view.giaddr(), &new_giaddr.into());
         Ok(())
     }
