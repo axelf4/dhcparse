@@ -281,15 +281,15 @@ impl DhcpOption<'_> {
 }
 
 #[inline]
-fn read_str<'a>(b: &'a [u8]) -> Result<&'a [u8], Error> {
-    if b.len() < 1 {
+fn read_str(b: &[u8]) -> Result<&[u8], Error> {
+    if b.is_empty() {
         return Err(Error::Malformed);
     }
     Ok(b)
 }
 
 #[inline]
-fn read_addrs<'a>(b: &'a [u8]) -> Result<&'a [Addr], Error> {
+fn read_addrs(b: &[u8]) -> Result<&[Addr], Error> {
     if b.len() < 4 || b.len() % mem::size_of::<Addr>() != 0 {
         return Err(Error::Malformed);
     }
@@ -332,18 +332,18 @@ impl<'a> DhcpOption<'a> {
                 16 => SwapServer(b.try_into()?),
                 17 => RootPath(read_str(b)?),
                 18 => ExtensionsPath(read_str(b)?),
-                19 => match b {
-                    &[x] => IpForwarding(if x == 1 { true } else { false }),
+                19 => match *b {
+                    [x] => IpForwarding(x == 1),
                     _ => return Err(Error::Malformed),
                 },
-                52 => match b {
-                    &[x] => {
+                52 => match *b {
+                    [x] => {
                         OptionOverload(crate::OptionOverload::from_bits(x).ok_or(Error::Malformed)?)
                     }
                     _ => return Err(Error::Malformed),
                 },
-                53 => match b {
-                    &[x] => MessageType(x.try_into()?),
+                53 => match *b {
+                    [x] => MessageType(x.try_into()?),
                     _ => return Err(Error::Malformed),
                 },
                 82 => RelayAgentInformation(relay::RelayAgentInformation::new(b)?),
@@ -356,11 +356,11 @@ impl<'a> DhcpOption<'a> {
     fn write<'buf>(&self, cursor: &mut Cursor<'buf>) -> Result<(), Error> {
         use DhcpOption::*;
         cursor.write_u8(self.code())?;
-        Ok(match *self {
-            Pad | End => {}
+        match *self {
+            Pad | End => Ok(()),
             SubnetMask(addr) | SwapServer(addr) => {
                 cursor.write_u8(addr.0.len() as u8)?;
-                cursor.write(&addr.0)?;
+                cursor.write(&addr.0)
             }
             Router(addrs)
             | TimeServer(addrs)
@@ -373,7 +373,7 @@ impl<'a> DhcpOption<'a> {
             | ResourceLocationServer(addrs) => {
                 let xs = unsafe { &*(addrs as *const [Addr] as *const [u8]) };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
-                cursor.write(xs)?;
+                cursor.write(xs)
             }
             HostName(xs)
             | MeritDumpFile(xs)
@@ -383,25 +383,25 @@ impl<'a> DhcpOption<'a> {
             | RelayAgentInformation(relay::RelayAgentInformation(xs))
             | Unknown(_, xs) => {
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
-                cursor.write(xs)?;
+                cursor.write(xs)
             }
             BootFileSize(x) => {
                 cursor.write_u8(1)?;
-                cursor.write(&x.to_be_bytes())?;
+                cursor.write(&x.to_be_bytes())
             }
             IpForwarding(x) => {
                 cursor.write_u8(1)?;
-                cursor.write_u8(if x { 1 } else { 0 })?;
+                cursor.write_u8(if x { 1 } else { 0 })
             }
             OptionOverload(x) => {
                 cursor.write_u8(1)?;
-                cursor.write_u8(x.bits())?;
+                cursor.write_u8(x.bits())
             }
             MessageType(x) => {
                 cursor.write_u8(1)?;
-                cursor.write_u8(x as u8)?;
+                cursor.write_u8(x as u8)
             }
-        })
+        }
     }
 }
 
@@ -668,7 +668,7 @@ pub trait Encode {
     /// This does not support setting options need more than 255 bytes
     /// of data.
     #[inline]
-    fn set_option<'a>(self, option: DhcpOption<'a>) -> SetOption<'a, Self>
+    fn set_option(self, option: DhcpOption<'_>) -> SetOption<'_, Self>
     where
         Self: Sized,
     {
@@ -719,14 +719,15 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
         cursor: &mut Cursor<'new>,
         (old_option, bnd): (&DhcpOption<'old>, (usize, usize)),
     ) -> Result<(), Error> {
-        Ok(if old_option.code() == self.option.code() {
+        if old_option.code() == self.option.code() {
             if !self.replaced {
                 self.option.write(cursor)?;
             }
             self.replaced = true;
+            Ok(())
         } else {
-            self.prev.write_option(cursor, (old_option, bnd))?;
-        })
+            self.prev.write_option(cursor, (old_option, bnd))
+        }
     }
 
     #[inline]

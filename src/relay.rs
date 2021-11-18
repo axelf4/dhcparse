@@ -86,7 +86,7 @@ pub fn encode<'a>(iter: impl IntoIterator<Item = SubOption<'a>>) -> Result<Vec<u
     use std::convert::TryInto;
 
     let mut res = Vec::new();
-    for subopt in iter.into_iter() {
+    for subopt in iter {
         res.push(subopt.code());
         match subopt {
             SubOption::AgentCircuitId(b) | SubOption::AgentRemoteId(b) => {
