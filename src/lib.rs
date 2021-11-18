@@ -86,7 +86,7 @@ impl<'a> Cursor<'a> {
 ///
 /// This is similar to [std::net::Ipv4Addr], but has an explicit
 /// representation.
-#[derive(Clone, PartialEq, Eq, RefCast, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, RefCast, Debug)]
 #[repr(transparent)]
 pub struct Addr([u8; 4]);
 
