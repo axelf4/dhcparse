@@ -678,6 +678,17 @@ pub trait Encode {
             option,
         }
     }
+
+    /// Returns a new transform that initially discards any options
+    /// for which the function returns true.
+    #[inline]
+    fn filter_options<F>(self, f: F) -> FilterOptions<Self, F>
+    where
+        FilterOptions<Self, F>: Encode,
+        Self: Sized,
+    {
+        FilterOptions { prev: self, f }
+    }
 }
 
 /// A base transform that just copies the old message.
@@ -737,6 +748,35 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
             self.option.write(cursor)?;
         }
         Ok(())
+    }
+}
+
+/// A transform that filters options.
+pub struct FilterOptions<Prev, F> {
+    prev: Prev,
+    f: F,
+}
+
+impl<Prev: Encode, F> Encode for FilterOptions<Prev, F>
+where
+    for<'a> F: FnMut(DhcpOption<'a>) -> bool,
+{
+    #[inline]
+    fn write_option<'old, 'new>(
+        &mut self,
+        cursor: &mut Cursor<'new>,
+        (old_option, bnd): (&DhcpOption<'old>, (usize, usize)),
+    ) -> Result<(), Error> {
+        if (self.f)(*old_option) {
+            self.prev.write_option(cursor, (old_option, bnd))
+        } else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+        self.prev.write_new_options(cursor)
     }
 }
 
