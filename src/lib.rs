@@ -1,6 +1,54 @@
 /*!
 A zero-copy DHCPv4 parser.
 
+This crate is suitable for writing DHCP relay agents, which only need
+to read and write a few fields, set and possibly remove a couple of
+options, before forwarding an incoming DHCP message.
+
+# Examples
+
+Basic usage:
+
+```
+# const EXAMPLE_DISCOVER_MSG: [u8; 250] = [
+#     /* op */ 2, /* htype */ 1, /* hlen */ 6, /* hops */ 0,
+#     /* xid */ 0xC7, 0xF5, 0xA0, 0xA7, /* secs */ 0, 0, /* flags */ 0x00, 0x00,
+#     /* ciaddr */ 0x00, 0x00, 0x00, 0x00, /* yiaddr */ 0x00, 0x00, 0x00, 0x00,
+#     /* siaddr */ 0x00, 0x00, 0x00, 0x00, /* giaddr */ 0x00, 0x00, 0x00, 0x00,
+#     /* chaddr */ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     /* sname */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, /* file */ /* msg type */ 53, 1, 1, /* end */ 255, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#     0, 0, 0, /* magic */ 99, 130, 83, 99, /* options */
+#     /* option overload */ 52, 1, 0b01, /* requested addr */ 50, 4, 192, 168, 1, 100, /* end */ 255,
+# ];
+use dhcparse::{get_options, Dhcpv4View, MessageType};
+use std::net::Ipv4Addr;
+
+let mut msg = Dhcpv4View::new(EXAMPLE_DISCOVER_MSG)?;
+
+// Read a field
+assert_eq!(msg.chaddr()?, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+
+// Set a field
+*msg.giaddr_mut() = Ipv4Addr::new(192, 168, 1, 50).into();
+
+// Parse a set of options
+assert_eq!(
+    get_options!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
+    (
+        MessageType::Discover,
+        None,
+        Some(&Ipv4Addr::new(192, 168, 1, 100).into())
+    )
+);
+# Ok::<(), dhcparse::Error>(())
+```
+
 See:
  * [RFC2131]: Dynamic Host Configuration Protocol
  * [RFC2132]: DHCP Options and BOOTP Vendor Extensions
@@ -26,6 +74,8 @@ pub mod relay;
 pub const DHCP_SERVER_PORT: u16 = 67;
 /// The 'DHCP client' UDP port.
 pub const DHCP_CLIENT_PORT: u16 = 68;
+/// The minimum DHCP message size all agents are required to support.
+pub const MAX_MESSAGE_SIZE: usize = 576;
 
 /// The type of errors that may be produced by this crate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -41,6 +91,8 @@ pub enum Error {
     TooLong,
     /// Missing string NULL terminator.
     BadNull,
+    /// Missing required option.
+    MissingRequired,
 }
 
 impl fmt::Display for Error {
@@ -51,6 +103,7 @@ impl fmt::Display for Error {
             Error::Overflow => "destination buffer is too small",
             Error::TooLong => "data is too long to fit in a single entity",
             Error::BadNull => "missing NULL terminator",
+            Error::MissingRequired => "an option marked as required was missing",
         })
     }
 }
@@ -88,7 +141,7 @@ impl<'a> Cursor<'a> {
 /// representation.
 #[derive(Clone, Copy, PartialEq, Eq, RefCast, Debug)]
 #[repr(transparent)]
-pub struct Addr([u8; 4]);
+pub struct Addr(pub [u8; 4]);
 
 impl<'a> TryFrom<&'a [u8]> for &'a Addr {
     type Error = Error;
@@ -382,7 +435,7 @@ impl<'a> DhcpOption<'a> {
                         return Err(Error::Malformed);
                     }
                     let i = NetworkEndian::read_u16(b);
-                    if i < MIN_MESSAGE_SIZE as u16 {
+                    if i < MAX_MESSAGE_SIZE as u16 {
                         return Err(Error::Malformed);
                     }
                     MaximumMessageSize(i)
@@ -455,7 +508,7 @@ impl<'a> DhcpOption<'a> {
                 cursor.write_u8(x as u8)
             }
             MaximumMessageSize(i) => {
-                if i < MIN_MESSAGE_SIZE as u16 {
+                if i < MAX_MESSAGE_SIZE as u16 {
                     return Err(Error::Malformed);
                 }
                 cursor.write_u8(2)?;
@@ -749,6 +802,70 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Dhcpv4View<T> {
     }
 }
 
+#[doc(hidden)]
+pub mod _get_options {
+    /// Dummy identifier to only allow the keyword `required` in [`get_options`].
+    ///
+    /// [get_options]: super::get_options
+    #[allow(non_upper_case_globals)]
+    pub const required: () = ();
+}
+
+/// Convenience macro for parsing a set of options from a message.
+///
+/// It takes as arguments a [`Dhcpv4View`] and a set of [`DhcpOption`]
+/// variant names and returns either a parse error or a tuple
+/// containing the data of the respective options. Each option name
+/// may optionally be followed by the keyword `required`. In that case
+/// it is an error if the option is missing and the data will not be
+/// wrapped in an [`Option`].
+///
+/// For getting *all* occurances of an option, one has to fall back on
+/// [`Dhcpv4View::options`] with a custom reducer.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::net::Ipv4Addr;
+/// use dhcparse::{get_options, Dhcpv4View, MessageType};
+/// # let buf: &[u8] = todo!();
+/// let msg = Dhcpv4View::new(buf)?;
+/// assert_eq!(
+///     get_options!(msg; MessageType required, RequestedIpAddress)?,
+///     (
+///         MessageType::Discover,
+///         Some(&Ipv4Addr::new(192, 168, 1, 100).into())
+///     )
+/// );
+/// # Ok::<(), dhcparse::Error>(())
+/// ```
+#[macro_export]
+macro_rules! get_options {
+    ($msg:expr; $($opt:ident $($required:ident)? ),*)
+        => ((|| -> ::core::result::Result<_, $crate::Error> {
+            use ::core::option::Option::*;
+            let mut count = 0;
+            $(#[allow(non_snake_case)] let mut $opt = None; count += 1; )*
+            for x in $msg.options()? {
+                match x? {
+                    $(($crate::DhcpOption::$opt(data), _)
+                      if $opt.is_none() => { $opt = Some(data); },)*
+                    _ => continue,
+                };
+                count -= 1;
+                if count == 0 { break; }
+            }
+            Ok(($({
+                #[allow(unused)] let x = $opt;
+                $(
+                    $crate::_get_options::$required;
+                    let x = $opt.ok_or($crate::Error::MissingRequired)?;
+                )?
+                x
+            }),*))
+        })())
+}
+
 mod private {
     pub trait Sealed {}
 
@@ -988,11 +1105,10 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn write_options() -> Result<(), Error> {
         let view = Dhcpv4View::new(EX_MSG)?;
-        let mut out = [0; 576];
+        let mut out = [0; MAX_MESSAGE_SIZE];
 
         // Try to replace an option
         assert_eq!(
