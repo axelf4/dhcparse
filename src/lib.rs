@@ -749,8 +749,16 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Dhcpv4View<T> {
     }
 }
 
+mod private {
+    pub trait Sealed {}
+
+    impl Sealed for super::Encoder {}
+    impl<Prev> Sealed for super::SetOption<'_, Prev> {}
+    impl<Prev, F> Sealed for super::FilterOptions<Prev, F> {}
+}
+
 /// An interface for DHCPv4 message transforms.
-pub trait Encode {
+pub trait Encode: private::Sealed {
     /// Reencodes the given DHCPv4 message using this transform.
     ///
     /// The return value, if successful, is a sliced reference to the
@@ -772,7 +780,7 @@ pub trait Encode {
 
         src.options()?.try_for_each(|x| {
             let (option, bnd) = x?;
-            self.write_option(&mut cursor, (&option, bnd))
+            self.write_option(&mut cursor, data, (&option, bnd))
         })?;
         self.write_new_options(&mut cursor)?;
         DhcpOption::End.write(&mut cursor)?;
@@ -785,6 +793,7 @@ pub trait Encode {
     fn write_option<'old, 'new>(
         &mut self,
         cursor: &mut Cursor<'new>,
+        src: &'old [u8],
         old_option: (&DhcpOption<'old>, (usize, usize)),
     ) -> Result<(), Error>;
 
@@ -827,14 +836,18 @@ impl Encode for Encoder {
     fn write_option<'old, 'new>(
         &mut self,
         cursor: &mut Cursor<'new>,
+        src: &'old [u8],
         (old_option, (start, len)): (&DhcpOption<'old>, (usize, usize)),
     ) -> Result<(), Error> {
+        if let DhcpOption::OptionOverload(_) = old_option {
+            return Ok(());
+        }
         if cursor.index == start {
             // Since we copied old data the option has already been written
             cursor.index += len;
             Ok(())
         } else {
-            old_option.write(cursor)
+            cursor.write(&src[start..][..len])
         }
     }
 
@@ -856,6 +869,7 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
     fn write_option<'old, 'new>(
         &mut self,
         cursor: &mut Cursor<'new>,
+        src: &'old [u8],
         (old_option, bnd): (&DhcpOption<'old>, (usize, usize)),
     ) -> Result<(), Error> {
         if old_option.code() == self.option.code() {
@@ -865,7 +879,7 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
             self.replaced = true;
             Ok(())
         } else {
-            self.prev.write_option(cursor, (old_option, bnd))
+            self.prev.write_option(cursor, src, (old_option, bnd))
         }
     }
 
@@ -887,16 +901,17 @@ pub struct FilterOptions<Prev, F> {
 
 impl<Prev: Encode, F> Encode for FilterOptions<Prev, F>
 where
-    for<'a> F: FnMut(DhcpOption<'a>) -> bool,
+    for<'a> F: Fn(DhcpOption<'a>) -> bool,
 {
     #[inline]
     fn write_option<'old, 'new>(
         &mut self,
         cursor: &mut Cursor<'new>,
+        src: &'old [u8],
         (old_option, bnd): (&DhcpOption<'old>, (usize, usize)),
     ) -> Result<(), Error> {
         if (self.f)(*old_option) {
-            self.prev.write_option(cursor, (old_option, bnd))
+            self.prev.write_option(cursor, src, (old_option, bnd))
         } else {
             Ok(())
         }
