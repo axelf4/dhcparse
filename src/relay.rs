@@ -35,9 +35,9 @@ impl<'a> SubOption<'a> {
     }
 }
 
-struct SubOptionIter<'a>(&'a [u8]);
+struct SubOptions<'a>(&'a [u8]);
 
-impl<'a> Iterator for SubOptionIter<'a> {
+impl<'a> Iterator for SubOptions<'a> {
     type Item = Result<SubOption<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -57,7 +57,7 @@ impl<'a> Iterator for SubOptionIter<'a> {
     }
 }
 
-impl FusedIterator for SubOptionIter<'_> {}
+impl FusedIterator for SubOptions<'_> {}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RelayAgentInformation<'a>(pub(crate) &'a [u8]);
@@ -77,27 +77,31 @@ impl<'a> RelayAgentInformation<'a> {
     }
 
     pub fn suboptions(&self) -> impl Iterator<Item = Result<SubOption<'a>, Error>> {
-        SubOptionIter(self.0)
+        SubOptions(self.0)
     }
 }
 
+/// Writes the Relay Agent Information data into the given writer.
 #[cfg(feature = "std")]
-pub fn encode<'a>(iter: impl IntoIterator<Item = SubOption<'a>>) -> Result<Vec<u8>, Error> {
-    use std::convert::TryInto;
+pub fn encode<'a>(
+    mut writer: impl std::io::Write,
+    iter: impl IntoIterator<Item = SubOption<'a>>,
+) -> std::io::Result<()> {
+    use std::{convert::TryInto, io};
 
-    let mut res = Vec::new();
     for subopt in iter {
-        res.push(subopt.code());
+        writer.write_all(&[subopt.code()])?;
         match subopt {
-            SubOption::AgentCircuitId(b) | SubOption::AgentRemoteId(b) => {
-                res.push(b.len().try_into().map_err(|_| Error::TooLong)?);
-                res.extend_from_slice(b);
-            }
-            SubOption::Unknown(_code, b) => {
-                res.push(b.len().try_into().map_err(|_| Error::TooLong)?);
-                res.extend_from_slice(b);
+            SubOption::AgentCircuitId(b)
+            | SubOption::AgentRemoteId(b)
+            | SubOption::Unknown(_, b) => {
+                writer
+                    .write_all(&[b.len().try_into().map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidData, Error::TooLong)
+                    })?])?;
+                writer.write_all(b)?;
             }
         }
     }
-    Ok(res)
+    Ok(())
 }
