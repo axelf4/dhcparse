@@ -16,6 +16,7 @@ pub mod subopt {
 
 /// Relay Agent Information sub-option.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum SubOption<'a> {
     /// 1 Agent Circuit ID
     AgentCircuitId(&'a [u8]),

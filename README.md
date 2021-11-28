@@ -14,10 +14,10 @@ options, before forwarding an incoming DHCP message.
 Basic usage:
 
 ```rust
-use dhcparse::{get_options, Dhcpv4View, MessageType};
+use dhcparse::{get_v4_opts, dhcpv4::{Message, MessageType}};
 use std::net::Ipv4Addr;
 
-let mut msg = Dhcpv4View::new(EXAMPLE_DISCOVER_MSG)?;
+let mut msg = Message::new(EXAMPLE_DISCOVER_MSG)?;
 
 // Read a field
 assert_eq!(msg.chaddr()?, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
@@ -27,7 +27,7 @@ assert_eq!(msg.chaddr()?, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
 
 // Parse a set of options
 assert_eq!(
-    get_options!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
+    get_v4_opts!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
     (
         MessageType::Discover,
         None,
