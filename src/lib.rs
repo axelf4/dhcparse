@@ -4,6 +4,10 @@ A zero-copy DHCPv4 parser.
 This crate is suitable for writing DHCP relay agents, which only need
 to read and write a few fields, set and possibly remove a couple of
 options, before forwarding an incoming DHCP message.
+
+Although fields in the underlying message buffers are stored in
+network-endian, the arguments and return values of getters and setters
+defined by this crate are all native-endian.
  */
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -12,6 +16,7 @@ options, before forwarding an incoming DHCP message.
 use core::fmt;
 
 pub mod dhcpv4;
+pub mod dhcpv6;
 
 /// The type of errors that may be produced by this crate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
