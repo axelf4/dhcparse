@@ -233,6 +233,8 @@ pub enum DhcpOption<'a> {
     /// 21 Policy Filter
     PolicyFilter(&'a [[Addr; 2]]),
     /// 22 Maximum Datagram Reassembly Size
+    ///
+    /// The minimum legal value is [`MAX_MESSAGE_SIZE`].
     MaximumDatagramSize(u16),
     /// 50 Requested IP Address
     RequestedIpAddress(&'a Addr),
@@ -251,6 +253,8 @@ pub enum DhcpOption<'a> {
     /// 56 Message
     Message(&'a [u8]),
     /// 57 Maximum DHCP Message Size
+    ///
+    /// The minimum legal value is [`MAX_MESSAGE_SIZE`].
     MaximumMessageSize(u16),
     /// 60 Vendor class identifier
     VendorClassIdentifier(&'a [u8]),
@@ -384,11 +388,7 @@ impl<'a> DhcpOption<'a> {
                     if b.len() != 2 {
                         return Err(Error::Malformed);
                     }
-                    let i = NetworkEndian::read_u16(b);
-                    if i < MAX_MESSAGE_SIZE as u16 {
-                        return Err(Error::Malformed);
-                    }
-                    MaximumDatagramSize(i)
+                    MaximumDatagramSize(NetworkEndian::read_u16(b))
                 }
                 50 => RequestedIpAddress(b.try_into()?),
                 51 => {
@@ -414,11 +414,7 @@ impl<'a> DhcpOption<'a> {
                     if b.len() != 2 {
                         return Err(Error::Malformed);
                     }
-                    let i = NetworkEndian::read_u16(b);
-                    if i < MAX_MESSAGE_SIZE as u16 {
-                        return Err(Error::Malformed);
-                    }
-                    MaximumMessageSize(i)
+                    MaximumMessageSize(NetworkEndian::read_u16(b))
                 }
                 60 => VendorClassIdentifier(read_str(b)?),
                 82 => RelayAgentInformation(relay::RelayAgentInformation::new(b)?),
@@ -471,7 +467,7 @@ impl<'a> DhcpOption<'a> {
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
             }
-            BootFileSize(x) => {
+            BootFileSize(x) | MaximumDatagramSize(x) | MaximumMessageSize(x) => {
                 cursor.write_u8(2)?;
                 cursor.write(&x.to_be_bytes())
             }
@@ -484,13 +480,6 @@ impl<'a> DhcpOption<'a> {
                 let xs = unsafe { &*(addr_pairs as *const [[Addr; 2]] as *const [u8]) };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
-            }
-            MaximumDatagramSize(i) | MaximumMessageSize(i) => {
-                if i < MAX_MESSAGE_SIZE as u16 {
-                    return Err(Error::Malformed);
-                }
-                cursor.write_u8(2)?;
-                cursor.write(&i.to_be_bytes())
             }
             AddressLeaseTime(i) => {
                 cursor.write_u8(4)?;
