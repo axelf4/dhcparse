@@ -493,6 +493,45 @@ impl<'a> DhcpOption<'a> {
             }
         }
     }
+
+    /// Returns the byte size of this option when serialized.
+    fn size(&self) -> usize {
+        use DhcpOption::*;
+        match self {
+            Pad
+            | IpForwarding(_)
+            | NonLocalSrcRouting(_)
+            | OptionOverload(_)
+            | MessageType(_)
+            | End => 1,
+            SubnetMask(addr)
+            | SwapServer(addr)
+            | RequestedIpAddress(addr)
+            | ServerIdentifier(addr) => mem::size_of_val(addr),
+            TimeOffset(_) | AddressLeaseTime(_) => 4,
+            Router(addrs)
+            | TimeServer(addrs)
+            | NameServer(addrs)
+            | DomainNameServer(addrs)
+            | LogServer(addrs)
+            | CookieServer(addrs)
+            | LPRServer(addrs)
+            | ImpressServer(addrs)
+            | ResourceLocationServer(addrs) => mem::size_of_val(addrs),
+            HostName(xs)
+            | MeritDumpFile(xs)
+            | DomainName(xs)
+            | RootPath(xs)
+            | ExtensionsPath(xs)
+            | RelayAgentInformation(relay::RelayAgentInformation(xs))
+            | ParameterRequestList(xs)
+            | Message(xs)
+            | VendorClassIdentifier(xs)
+            | Unknown(_, xs) => mem::size_of_val(xs),
+            BootFileSize(_) | MaximumDatagramSize(_) | MaximumMessageSize(_) => 2,
+            PolicyFilter(addr_pairs) => mem::size_of_val(addr_pairs),
+        }
+    }
 }
 
 const SNAME_FIELD_OFFSET: usize = 44;
