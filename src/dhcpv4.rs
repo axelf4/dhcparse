@@ -108,8 +108,8 @@ impl From<std::net::Ipv4Addr> for Addr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 /// The packet op code/message type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OpCode {
     /// Signifies that the message is sent from a client to a server.
     BootRequest = 1,
@@ -131,6 +131,7 @@ impl TryFrom<u8> for OpCode {
 
 /// The DHCP message type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum MessageType {
     Discover = 1,
     Offer,
@@ -264,7 +265,33 @@ pub enum DhcpOption<'a> {
     Unknown(u8, &'a [u8]),
 }
 
-impl DhcpOption<'_> {
+#[inline]
+fn read_str(b: &[u8]) -> Result<&[u8], Error> {
+    if b.is_empty() {
+        return Err(Error::Malformed);
+    }
+    Ok(b)
+}
+
+#[inline]
+fn read_addrs(b: &[u8]) -> Result<&[Addr], Error> {
+    if b.len() < 4 || b.len() % mem::size_of::<Addr>() != 0 {
+        return Err(Error::Malformed);
+    }
+    // Safety: Ok, since Addr has same representation as [u8; 4].
+    Ok(unsafe { &*(b as *const [u8] as *const [Addr]) })
+}
+
+#[inline]
+fn read_addr_pairs(b: &[u8]) -> Result<&[[Addr; 2]], Error> {
+    if b.len() < 8 || b.len() % mem::size_of::<[Addr; 2]>() != 0 {
+        return Err(Error::Malformed);
+    }
+    // Safety: Ok, since Addr has same representation as [u8; 4].
+    Ok(unsafe { &*(b as *const [u8] as *const [[Addr; 2]]) })
+}
+
+impl<'a> DhcpOption<'a> {
     /// Returns the tag of this parameter.
     pub fn code(&self) -> u8 {
         use DhcpOption::*;
@@ -306,38 +333,9 @@ impl DhcpOption<'_> {
             Unknown(code, _) => code,
         }
     }
-}
 
-#[inline]
-fn read_str(b: &[u8]) -> Result<&[u8], Error> {
-    if b.is_empty() {
-        return Err(Error::Malformed);
-    }
-    Ok(b)
-}
-
-#[inline]
-fn read_addrs(b: &[u8]) -> Result<&[Addr], Error> {
-    if b.len() < 4 || b.len() % mem::size_of::<Addr>() != 0 {
-        return Err(Error::Malformed);
-    }
-    // Safety: Ok, since Addr has same representation as [u8; 4].
-    Ok(unsafe { &*(b as *const [u8] as *const [Addr]) })
-}
-
-#[inline]
-fn read_addr_pairs(b: &[u8]) -> Result<&[[Addr; 2]], Error> {
-    if b.len() < 8 || b.len() % mem::size_of::<[Addr; 2]>() != 0 {
-        return Err(Error::Malformed);
-    }
-    // Safety: Ok, since Addr has same representation as [u8; 4].
-    Ok(unsafe { &*(b as *const [u8] as *const [[Addr; 2]]) })
-}
-
-impl<'a> DhcpOption<'a> {
-    fn read(buf: &'a [u8]) -> Result<(DhcpOption<'a>, usize), Error> {
+    fn read(buf: &'a [u8]) -> Result<(Self, usize), Error> {
         use DhcpOption::*;
-
         let (tag, b) = match *buf {
             [0, ..] => return Ok((Pad, 1)),
             [255, ..] => return Ok((End, 1)),
@@ -580,7 +578,7 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for Message<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> AsMut<[u8]> for Message<T> {
+impl<T: AsMut<[u8]>> AsMut<[u8]> for Message<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut [u8] {
         self.0.as_mut()
@@ -716,7 +714,7 @@ impl<T: AsRef<[u8]>> Message<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Message<T> {
+impl<T: AsMut<[u8]>> Message<T> {
     /// Sets the 'op' field.
     #[inline]
     pub fn set_op(&mut self, op: OpCode) {
@@ -823,7 +821,7 @@ pub mod _get_options {
 macro_rules! get_v4_opts {
     ($msg:expr; $($opt:ident $($required:ident)? ),*)
         => ((|| -> ::core::result::Result<_, $crate::Error> {
-            use ::core::option::Option::*;
+            use ::core::{result::Result::Ok, option::Option::*};
             let mut count = 0;
             $(#[allow(non_snake_case)] let mut $opt = None; count += 1; )*
             for x in $msg.options()? {
