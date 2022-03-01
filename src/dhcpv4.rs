@@ -850,6 +850,7 @@ mod private {
     pub trait Sealed {}
 
     impl Sealed for super::Encoder {}
+    impl<Prev> Sealed for super::AppendOption<'_, Prev> {}
     impl<Prev> Sealed for super::SetOption<'_, Prev> {}
     impl<Prev, F> Sealed for super::FilterOptions<Prev, F> {}
 }
@@ -897,10 +898,22 @@ pub trait Encode: private::Sealed {
     #[doc(hidden)]
     fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error>;
 
+    /// Returns a new transform that additionally appends the given option.
+    #[inline]
+    fn append_option(self, option: DhcpOption<'_>) -> AppendOption<'_, Self>
+    where
+        Self: Sized,
+    {
+        AppendOption { prev: self, option }
+    }
+
     /// Returns a new transform that additionally sets the given option.
     ///
-    /// This does not support setting options need more than 255 bytes
-    /// of data.
+    /// For setting options that need more than 255 bytes of data, use
+    /// a combination of [`append_option`] and [`filter_options`].
+    ///
+    /// [`append_option`]: Self::append_option
+    /// [`filter_options`]: Self::filter_options
     #[inline]
     fn set_option(self, option: DhcpOption<'_>) -> SetOption<'_, Self>
     where
@@ -952,6 +965,31 @@ impl Encode for Encoder {
     #[inline]
     fn write_new_options<'new>(&mut self, _cursor: &mut Cursor<'new>) -> Result<(), Error> {
         Ok(())
+    }
+}
+
+/// A transform that appends a given option.
+#[derive(Debug)]
+pub struct AppendOption<'a, Prev> {
+    prev: Prev,
+    option: DhcpOption<'a>,
+}
+
+impl<'a, Prev: Encode> Encode for AppendOption<'a, Prev> {
+    #[inline]
+    fn write_option<'old, 'new>(
+        &mut self,
+        cursor: &mut Cursor<'new>,
+        src: &'old [u8],
+        (old_option, bnd): (&DhcpOption<'old>, (usize, usize)),
+    ) -> Result<(), Error> {
+        self.prev.write_option(cursor, src, (old_option, bnd))
+    }
+
+    #[inline]
+    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+        self.prev.write_new_options(cursor)?;
+        self.option.write(cursor)
     }
 }
 
