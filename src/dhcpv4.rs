@@ -822,8 +822,6 @@ impl<T: AsMut<[u8]>> Message<T> {
 #[doc(hidden)]
 pub mod _get_options {
     /// Dummy identifier to only allow the keyword `required` in [`get_v4_opts`].
-    ///
-    /// [get_options]: super::get_options
     #[allow(non_upper_case_globals)]
     pub const required: () = ();
 }
@@ -858,29 +856,36 @@ pub mod _get_options {
 /// ```
 #[macro_export]
 macro_rules! get_v4_opts {
-    ($msg:expr; $($opt:ident $($required:ident)? ),*)
-        => ((|| -> ::core::result::Result<_, $crate::Error> {
-            use ::core::{result::Result::Ok, option::Option::*};
-            let mut count = 0;
-            $(#[allow(non_snake_case)] let mut $opt = None; count += 1; )*
-            for x in $msg.options()? {
-                match x? {
-                    $(($crate::dhcpv4::DhcpOption::$opt(data), _)
-                      if $opt.is_none() => { $opt = Some(data); },)*
-                    _ => continue,
-                };
-                count -= 1;
-                if count == 0 { break; }
+    ($msg:expr; $($opt:ident $($required:ident)? ),*) => ('outer: loop {
+        use ::core::{result::Result::*, option::Option::*};
+        let mut count = 0;
+        $(#[allow(non_snake_case)] let mut $opt = None; count += 1;)*
+        for x in match $msg.options() {
+            Ok(x) => x,
+            Err(e) => break Err(e),
+        } {
+            match x {
+                $(Ok(($crate::dhcpv4::DhcpOption::$opt(data), _))
+                    if $opt.is_none() => { $opt = Some(data); },)*
+                Ok(_) => continue,
+                Err(e) => break 'outer Err(e),
             }
-            Ok(($({
-                #[allow(unused)] let x = $opt;
-                $(
-                    $crate::dhcpv4::_get_options::$required;
-                    let x = $opt.ok_or($crate::Error::MissingRequired)?;
-                )?
-                x
-            }),*))
-        })())
+            count -= 1;
+            if count == 0 { break; }
+        }
+        break Ok(($({
+            let x = $opt;
+            $(
+                $crate::dhcpv4::_get_options::$required;
+                let x = if let Some(x) = x {
+                    x
+                } else {
+                    break Err($crate::Error::MissingRequired);
+                };
+            )?
+            x
+        }),*));
+    })
 }
 
 mod private {
