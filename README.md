@@ -48,3 +48,13 @@ msg.set_op(OpCode::BootRequest);
 
 assert_eq!(msg.options()?.count(), 1);
 ```
+
+## Related projects
+
+* [dhcproto] is another Rust crate that parses DHCP messages into a
+  high-level representation. This may be more convenient for some
+  applications, but comes with the overhead of copying and heap
+  allocations. For instance, the current set of dhcproto benchmarks
+  would be no-ops with dhcparse.
+
+[dhcproto]: https://github.com/bluecatengineering/dhcproto
