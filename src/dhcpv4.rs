@@ -208,7 +208,7 @@ pub enum DhcpOption<'a> {
     /// 8 Cookie Server
     CookieServer(&'a [Addr]),
     /// 9 LPR Server
-    LPRServer(&'a [Addr]),
+    LprServer(&'a [Addr]),
     /// 10 Impress Server
     ImpressServer(&'a [Addr]),
     /// 11 Resource Location Server
@@ -306,7 +306,7 @@ impl<'a> DhcpOption<'a> {
             DomainNameServer(_) => 6,
             LogServer(_) => 7,
             CookieServer(_) => 8,
-            LPRServer(_) => 9,
+            LprServer(_) => 9,
             ImpressServer(_) => 10,
             ResourceLocationServer(_) => 11,
             HostName(_) => 12,
@@ -358,7 +358,7 @@ impl<'a> DhcpOption<'a> {
                 6 => DomainNameServer(read_addrs(b)?),
                 7 => LogServer(read_addrs(b)?),
                 8 => CookieServer(read_addrs(b)?),
-                9 => LPRServer(read_addrs(b)?),
+                9 => LprServer(read_addrs(b)?),
                 10 => ImpressServer(read_addrs(b)?),
                 11 => ResourceLocationServer(read_addrs(b)?),
                 12 => HostName(read_str(b)?),
@@ -444,7 +444,7 @@ impl<'a> DhcpOption<'a> {
             | DomainNameServer(addrs)
             | LogServer(addrs)
             | CookieServer(addrs)
-            | LPRServer(addrs)
+            | LprServer(addrs)
             | ImpressServer(addrs)
             | ResourceLocationServer(addrs) => {
                 // Safety: Addr has the same representation as [u8; 4]
@@ -515,7 +515,7 @@ impl<'a> DhcpOption<'a> {
             | DomainNameServer(addrs)
             | LogServer(addrs)
             | CookieServer(addrs)
-            | LPRServer(addrs)
+            | LprServer(addrs)
             | ImpressServer(addrs)
             | ResourceLocationServer(addrs) => mem::size_of_val(addrs),
             HostName(xs)
@@ -539,7 +539,14 @@ const FILE_FIELD_OFFSET: usize = SNAME_FIELD_OFFSET + 64;
 const OPTIONS_FIELD_OFFSET: usize = FILE_FIELD_OFFSET + 128;
 const MAGIC_COOKIE: [u8; 4] = [99, 130, 83, 99];
 
-struct Options<'a> {
+/// Immutable DHCPv4 option iterator.
+///
+/// This `struct` is created by the [`options`] method on [`Message`].
+/// See its documentation for more.
+///
+/// [`options`]: Message::options
+#[derive(Clone, Debug)]
+pub struct Options<'a> {
     /// The entire DHCP message.
     b: &'a [u8],
     overload: OptionOverload,
@@ -711,6 +718,8 @@ impl<T: AsRef<[u8]>> Message<T> {
 
     /// Returns the 'chaddr' field (client hardware address).
     ///
+    /// # Errors
+    ///
     /// An error is returned if the value of the 'hlen' field exceeds
     /// the maximum length of 16.
     #[inline]
@@ -746,9 +755,7 @@ impl<T: AsRef<[u8]>> Message<T> {
     /// options are excluded. If at some point the message is
     /// malformed, the corresponding error will be repeated endlessly.
     #[inline]
-    pub fn options(
-        &self,
-    ) -> Result<impl Iterator<Item = Result<(DhcpOption<'_>, (usize, usize)), Error>>, Error> {
+    pub fn options(&self) -> Result<Options<'_>, Error> {
         Options::new(self.as_ref())
     }
 }
