@@ -366,7 +366,7 @@ impl<'a, T: FromOptionCodeData<'a>> Iterator for Options<'a, T> {
                 self.b = newb;
                 Some(T::from(code, data))
             }
-            _ => return Some(Err(Error::Underflow)),
+            _ => Some(Err(Error::Underflow)),
         }
     }
 }

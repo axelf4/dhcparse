@@ -37,7 +37,7 @@ assert_eq!(msg.chaddr()?, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
 assert_eq!(
     get_v4_opts!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
     (
-        MessageType::Discover,
+        MessageType::DISCOVER,
         None,
         Some(&Ipv4Addr::new(192, 168, 1, 100).into())
     )
@@ -56,6 +56,7 @@ See:
 use bitflags::bitflags;
 use byteorder::{ByteOrder, NetworkEndian};
 use core::convert::{TryFrom, TryInto};
+use core::fmt;
 use core::iter::FusedIterator;
 use core::mem;
 use memchr::memchr;
@@ -109,7 +110,7 @@ impl From<std::net::Ipv4Addr> for Addr {
 }
 
 /// The packet op code/message type.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum OpCode {
     /// Signifies that the message is sent from a client to a server.
     BootRequest = 1,
@@ -129,33 +130,47 @@ impl TryFrom<u8> for OpCode {
     }
 }
 
-/// The DHCP message type.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[non_exhaustive]
-pub enum MessageType {
-    Discover = 1,
-    Offer,
-    Request,
-    Decline,
-    Ack,
-    Nak,
-    Release,
+/// DHCP message type.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MessageType(u8);
+
+impl MessageType {
+    pub const DISCOVER: MessageType = MessageType(1);
+    pub const OFFER: MessageType = MessageType(2);
+    pub const REQUEST: MessageType = MessageType(3);
+    pub const DECLINE: MessageType = MessageType(4);
+    pub const ACK: MessageType = MessageType(5);
+    pub const NAK: MessageType = MessageType(6);
+    pub const RELEASE: MessageType = MessageType(7);
+    pub const INFORM: MessageType = MessageType(8);
 }
 
-impl TryFrom<u8> for MessageType {
-    type Error = Error;
+impl From<u8> for MessageType {
+    fn from(x: u8) -> Self {
+        Self(x)
+    }
+}
 
-    fn try_from(x: u8) -> Result<Self, Self::Error> {
-        Ok(match x {
-            1 => MessageType::Discover,
-            2 => MessageType::Offer,
-            3 => MessageType::Request,
-            4 => MessageType::Decline,
-            5 => MessageType::Ack,
-            6 => MessageType::Nak,
-            7 => MessageType::Release,
-            _ => return Err(Error::Malformed),
-        })
+impl From<MessageType> for u8 {
+    fn from(MessageType(x): MessageType) -> Self {
+        x
+    }
+}
+
+impl fmt::Debug for MessageType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match *self {
+            MessageType::DISCOVER => "DISCOVER",
+            MessageType::OFFER => "OFFER",
+            MessageType::REQUEST => "REQUEST",
+            MessageType::DECLINE => "DECLINE",
+            MessageType::ACK => "ACK",
+            MessageType::NAK => "NAK",
+            MessageType::RELEASE => "RELEASE",
+            MessageType::INFORM => "INFORM",
+            Self(x) => return f.debug_tuple("MessageType").field(&x).finish(),
+        };
+        f.write_str(name)
     }
 }
 
@@ -402,7 +417,7 @@ impl<'a> DhcpOption<'a> {
                     _ => return Err(Error::Malformed),
                 },
                 53 => match *b {
-                    [x] => MessageType(x.try_into()?),
+                    [x] => MessageType(x.into()),
                     _ => return Err(Error::Malformed),
                 },
                 54 => ServerIdentifier(b.try_into()?),
@@ -487,9 +502,9 @@ impl<'a> DhcpOption<'a> {
                 cursor.write_u8(1)?;
                 cursor.write_u8(x.bits())
             }
-            MessageType(x) => {
+            MessageType(self::MessageType(x)) => {
                 cursor.write_u8(1)?;
-                cursor.write_u8(x as u8)
+                cursor.write_u8(x)
             }
         }
     }
@@ -855,7 +870,7 @@ pub mod _get_options {
 /// assert_eq!(
 ///     get_v4_opts!(msg; MessageType required, RequestedIpAddress)?,
 ///     (
-///         MessageType::Discover,
+///         MessageType::DISCOVER,
 ///         Some(&Ipv4Addr::new(192, 168, 1, 100).into())
 ///     )
 /// );
@@ -1166,7 +1181,7 @@ mod tests {
             view.options()?.collect::<Result<Vec<_>, _>>()?,
             [
                 (DhcpOption::OptionOverload(OptionOverload::FILE), (240, 3)),
-                (DhcpOption::MessageType(MessageType::Offer), (108, 3))
+                (DhcpOption::MessageType(MessageType::OFFER), (108, 3))
             ]
         );
         Ok(())
@@ -1181,13 +1196,13 @@ mod tests {
         assert_eq!(
             Message::new(
                 Encoder
-                    .set_option(DhcpOption::MessageType(MessageType::Request))
+                    .set_option(DhcpOption::MessageType(MessageType::REQUEST))
                     .encode(&view, &mut out)?
             )?
             .options()?
             .map(|x| x.unwrap().0)
             .find(|x| matches!(x, DhcpOption::MessageType(_))),
-            Some(DhcpOption::MessageType(MessageType::Request)),
+            Some(DhcpOption::MessageType(MessageType::REQUEST)),
         );
 
         // Add a new option
