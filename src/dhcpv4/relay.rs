@@ -88,7 +88,7 @@ pub fn encode<'a>(
     mut writer: impl std::io::Write,
     iter: impl IntoIterator<Item = SubOption<'a>>,
 ) -> std::io::Result<()> {
-    use std::{convert::TryInto, io};
+    use std::io;
 
     for subopt in iter {
         writer.write_all(&[subopt.code()])?;

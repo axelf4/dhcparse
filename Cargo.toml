@@ -2,10 +2,10 @@
 name = "dhcparse"
 version = "0.1.0"
 authors = ["Axel Forsman <axelsfor@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "A zero-copy DHCPv4 parser"
-homepage = "https://github.com/axelf4/dhcp"
-repository = "https://github.com/axelf4/dhcp"
+homepage = "https://github.com/axelf4/dhcparse"
+repository = "https://github.com/axelf4/dhcparse"
 license = "Apache-2.0"
 keywords = ["dhcp"]
 categories = ["network-programming", "no-std", "parser-implementations"]

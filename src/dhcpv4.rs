@@ -22,7 +22,7 @@ Basic usage:
 #     0, 0, 0, /* magic */ 99, 130, 83, 99, /* options */
 #     /* option overload */ 52, 1, 0b01, /* requested addr */ 50, 4, 192, 168, 1, 100, /* end */ 255,
 # ];
-use dhcparse::{get_v4_opts, dhcpv4::{Message, MessageType}};
+use dhcparse::{v4_options, dhcpv4::{Message, MessageType}};
 use std::net::Ipv4Addr;
 
 let mut msg = Message::new(EXAMPLE_DISCOVER_MSG)?;
@@ -35,13 +35,27 @@ assert_eq!(msg.chaddr()?, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
 
 // Parse a set of options
 assert_eq!(
-    get_v4_opts!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
+    v4_options!(msg; MessageType required, ServerIdentifier, RequestedIpAddress)?,
     (
         MessageType::DISCOVER,
         None,
         Some(&Ipv4Addr::new(192, 168, 1, 100).into())
     )
 );
+# Ok::<(), dhcparse::Error>(())
+```
+
+Constructing a new message:
+
+```
+use dhcparse::dhcpv4::{DhcpOption, Encode as _, Encoder, Message, MessageType, OpCode};
+// Create a copy of an empty message with the message type option added
+let mut msg = Encoder
+    .append_option(DhcpOption::MessageType(MessageType::DISCOVER))
+    .encode_to_owned(&Message::default())?;
+msg.set_op(OpCode::BootRequest);
+
+assert_eq!(msg.options()?.count(), 1);
 # Ok::<(), dhcparse::Error>(())
 ```
 
@@ -274,6 +288,12 @@ pub enum DhcpOption<'a> {
     MaximumMessageSize(u16),
     /// 60 Vendor class identifier
     VendorClassIdentifier(&'a [u8]),
+    /// 61 Client-identifier
+    ///
+    /// The first byte is the type field which should correspond to
+    /// 'htype' in case the client identifier is a hardware address,
+    /// or be zero.
+    ClientIdentifier(&'a [u8]),
     /// 82 Relay Agent Information
     RelayAgentInformation(relay::RelayAgentInformation<'a>),
     /// Unrecognized option.
@@ -344,6 +364,7 @@ impl<'a> DhcpOption<'a> {
             Message(_) => 56,
             MaximumMessageSize(_) => 57,
             VendorClassIdentifier(_) => 60,
+            ClientIdentifier(_) => 61,
             RelayAgentInformation(_) => 82,
             Unknown(code, _) => code,
         }
@@ -430,6 +451,12 @@ impl<'a> DhcpOption<'a> {
                     MaximumMessageSize(NetworkEndian::read_u16(b))
                 }
                 60 => VendorClassIdentifier(read_str(b)?),
+                61 => {
+                    if b.len() < 2 {
+                        return Err(Error::Malformed);
+                    }
+                    ClientIdentifier(read_str(b)?)
+                }
                 82 => RelayAgentInformation(relay::RelayAgentInformation::new(b)?),
                 _ => Unknown(tag, b),
             },
@@ -476,6 +503,7 @@ impl<'a> DhcpOption<'a> {
             | ParameterRequestList(xs)
             | Message(xs)
             | VendorClassIdentifier(xs)
+            | ClientIdentifier(xs)
             | Unknown(_, xs) => {
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
@@ -542,6 +570,7 @@ impl<'a> DhcpOption<'a> {
             | ParameterRequestList(xs)
             | Message(xs)
             | VendorClassIdentifier(xs)
+            | ClientIdentifier(xs)
             | Unknown(_, xs) => mem::size_of_val(xs),
             BootFileSize(_) | MaximumDatagramSize(_) | MaximumMessageSize(_) => 2,
             PolicyFilter(addr_pairs) => mem::size_of_val(addr_pairs),
@@ -655,6 +684,18 @@ impl<T> Message<T> {
     }
 }
 
+impl Default for Message<[u8; 241]> {
+    /// Returns a DHCPv4 message with all fields set to zero and zero options.
+    ///
+    /// This is intended for bootstrapping a message with [`Encoder::encode`].
+    fn default() -> Self {
+        let mut buf = [0; 241];
+        buf[OPTIONS_FIELD_OFFSET..][..MAGIC_COOKIE.len()].copy_from_slice(&MAGIC_COOKIE);
+        buf[OPTIONS_FIELD_OFFSET + MAGIC_COOKIE.len()] = DhcpOption::End.code();
+        Self(buf)
+    }
+}
+
 impl<T: AsRef<[u8]>> Message<T> {
     /// Constructs a new view from an underlying message buffer.
     ///
@@ -674,7 +715,7 @@ impl<T: AsRef<[u8]>> Message<T> {
         self.as_ref()[0].try_into()
     }
 
-    /// Gets the hardware len of the message (len of `chaddr`).
+    /// Gets the hardware len of the message (length of `chaddr`).
     #[inline]
     pub fn hlen(&self) -> u8 {
         self.as_ref()[2]
@@ -843,7 +884,7 @@ impl<T: AsMut<[u8]>> Message<T> {
 
 #[doc(hidden)]
 pub mod _get_options {
-    /// Dummy identifier to only allow the keyword `required` in [`get_v4_opts`].
+    /// Dummy identifier to only allow the keyword `required` in [`v4_options`].
     #[allow(non_upper_case_globals)]
     pub const required: () = ();
 }
@@ -864,11 +905,11 @@ pub mod _get_options {
 ///
 /// ```no_run
 /// use std::net::Ipv4Addr;
-/// use dhcparse::{get_v4_opts, dhcpv4::{Message, MessageType}};
+/// use dhcparse::{v4_options, dhcpv4::{Message, MessageType}};
 /// # let buf: &[u8] = todo!();
 /// let msg = Message::new(buf)?;
 /// assert_eq!(
-///     get_v4_opts!(msg; MessageType required, RequestedIpAddress)?,
+///     v4_options!(msg; MessageType required, RequestedIpAddress)?,
 ///     (
 ///         MessageType::DISCOVER,
 ///         Some(&Ipv4Addr::new(192, 168, 1, 100).into())
@@ -877,7 +918,7 @@ pub mod _get_options {
 /// # Ok::<(), dhcparse::Error>(())
 /// ```
 #[macro_export]
-macro_rules! get_v4_opts {
+macro_rules! v4_options {
     ($msg:expr; $($opt:ident $($required:ident)? ),*) => ('outer: loop {
         use ::core::{result::Result::*, option::Option::*};
         let mut count = 0;
@@ -929,7 +970,7 @@ pub trait Encode: private::Sealed {
         mut self,
         src: &Message<T>,
         dst: &'dst mut [u8],
-    ) -> Result<&'dst mut [u8], Error>
+    ) -> Result<Message<&'dst mut [u8]>, Error>
     where
         Self: Sized,
     {
@@ -948,7 +989,19 @@ pub trait Encode: private::Sealed {
         DhcpOption::End.write(&mut cursor)?;
 
         let len = cursor.index;
-        Ok(&mut dst[..len])
+        Ok(Message::new(&mut dst[..len]).unwrap())
+    }
+
+    /// Reencodes the given DHCPv4 message to a new owned buffer.
+    #[cfg(feature = "std")]
+    fn encode_to_owned<T: AsRef<[u8]>>(self, src: &Message<T>) -> Result<Message<Vec<u8>>, Error>
+    where
+        Self: Sized,
+    {
+        let mut buf = vec![0; src.as_ref().len() + self.max_size_diff()];
+        let len = self.encode(src, &mut buf)?.as_ref().len();
+        buf.truncate(len);
+        Ok(Message::new(buf).unwrap())
     }
 
     #[doc(hidden)]
@@ -961,6 +1014,10 @@ pub trait Encode: private::Sealed {
 
     #[doc(hidden)]
     fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error>;
+
+    /// Returns the largest byte size increase this encoder can incur
+    /// when reencoding any message.
+    fn max_size_diff(&self) -> usize;
 
     /// Returns a new transform that additionally appends the given option.
     #[inline]
@@ -1030,6 +1087,15 @@ impl Encode for Encoder {
     fn write_new_options<'new>(&mut self, _cursor: &mut Cursor<'new>) -> Result<(), Error> {
         Ok(())
     }
+
+    #[inline]
+    fn max_size_diff(&self) -> usize {
+        // Since we do not use the sname/file fields when reencoding
+        // messages, any options in those fields would take up space
+        // at the end instead.
+        /* sname field */
+        64 + /* file field */ 128 - /* end in both fields */ 2 - /* option overload option */ 3
+    }
 }
 
 /// A transform that appends a given option.
@@ -1054,6 +1120,11 @@ impl<'a, Prev: Encode> Encode for AppendOption<'a, Prev> {
     fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
         self.prev.write_new_options(cursor)?;
         self.option.write(cursor)
+    }
+
+    #[inline]
+    fn max_size_diff(&self) -> usize {
+        self.prev.max_size_diff() + self.option.size()
     }
 }
 
@@ -1092,6 +1163,11 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
         }
         Ok(())
     }
+
+    #[inline]
+    fn max_size_diff(&self) -> usize {
+        self.prev.max_size_diff() + self.option.size()
+    }
 }
 
 /// A transform that filters options.
@@ -1122,6 +1198,11 @@ where
     #[inline]
     fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
         self.prev.write_new_options(cursor)
+    }
+
+    #[inline]
+    fn max_size_diff(&self) -> usize {
+        self.prev.max_size_diff()
     }
 }
 
@@ -1194,30 +1275,47 @@ mod tests {
 
         // Try to replace an option
         assert_eq!(
-            Message::new(
-                Encoder
-                    .set_option(DhcpOption::MessageType(MessageType::REQUEST))
-                    .encode(&view, &mut out)?
-            )?
-            .options()?
-            .map(|x| x.unwrap().0)
-            .find(|x| matches!(x, DhcpOption::MessageType(_))),
+            Encoder
+                .set_option(DhcpOption::MessageType(MessageType::REQUEST))
+                .encode(&view, &mut out)?
+                .options()?
+                .map(|x| x.unwrap().0)
+                .find(|x| matches!(x, DhcpOption::MessageType(_))),
             Some(DhcpOption::MessageType(MessageType::REQUEST)),
         );
 
         // Add a new option
         assert_eq!(
-            Message::new(
-                Encoder
-                    .set_option(DhcpOption::IpForwarding(true))
-                    .encode(&view, &mut out)?
-            )?
-            .options()?
-            .map(|x| x.unwrap().0)
-            .find(|x| matches!(x, DhcpOption::IpForwarding(_))),
+            Encoder
+                .set_option(DhcpOption::IpForwarding(true))
+                .encode(&view, &mut out)?
+                .options()?
+                .map(|x| x.unwrap().0)
+                .find(|x| matches!(x, DhcpOption::IpForwarding(_))),
             Some(DhcpOption::IpForwarding(true)),
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn construct_new_msg() -> Result<(), Error> {
+        let client_id = [/* type field */ 6, 0x06, 0, 0, 0, 0, 0];
+        let chaddr = &client_id[1..];
+        let mut msg = Encoder
+            .append_option(DhcpOption::MessageType(MessageType::DISCOVER))
+            .append_option(DhcpOption::ClientIdentifier(&client_id))
+            .encode_to_owned(&Message::default())?;
+        msg.set_chaddr(chaddr)?;
+
+        assert_eq!(msg.chaddr()?, chaddr);
+        assert_eq!(
+            msg.options()?.collect::<Result<Vec<_>, _>>()?,
+            [
+                (DhcpOption::MessageType(MessageType::DISCOVER), (240, 3)),
+                (DhcpOption::ClientIdentifier(&client_id), (243, 9))
+            ]
+        );
         Ok(())
     }
 }
