@@ -51,7 +51,7 @@ Constructing a new message:
 use dhcparse::dhcpv4::{DhcpOption, Encode as _, Encoder, Message, MessageType, OpCode};
 // Create a copy of an empty message with the message type option added
 let mut msg = Encoder
-    .append_option(DhcpOption::MessageType(MessageType::DISCOVER))
+    .append_options([DhcpOption::MessageType(MessageType::DISCOVER)])
     .encode_to_owned(&Message::default())?;
 msg.set_op(OpCode::BootRequest);
 
@@ -955,7 +955,7 @@ mod private {
     pub trait Sealed {}
 
     impl Sealed for super::Encoder {}
-    impl<Prev> Sealed for super::AppendOption<'_, Prev> {}
+    impl<Prev, I> Sealed for super::AppendOptions<Prev, I> {}
     impl<Prev> Sealed for super::SetOption<'_, Prev> {}
     impl<Prev, F> Sealed for super::FilterOptions<Prev, F> {}
 }
@@ -1013,19 +1013,22 @@ pub trait Encode: private::Sealed {
     ) -> Result<(), Error>;
 
     #[doc(hidden)]
-    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error>;
+    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error>;
 
     /// Returns the largest byte size increase this encoder can incur
     /// when reencoding any message.
     fn max_size_diff(&self) -> usize;
 
-    /// Returns a new transform that additionally appends the given option.
+    /// Returns a new transform that additionally appends the given options.
     #[inline]
-    fn append_option(self, option: DhcpOption<'_>) -> AppendOption<'_, Self>
+    fn append_options<'a, I>(self, options: I) -> AppendOptions<Self, I>
     where
         Self: Sized,
     {
-        AppendOption { prev: self, option }
+        AppendOptions {
+            prev: self,
+            options,
+        }
     }
 
     /// Returns a new transform that additionally sets the given option.
@@ -1084,7 +1087,7 @@ impl Encode for Encoder {
     }
 
     #[inline]
-    fn write_new_options<'new>(&mut self, _cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options<'new>(self, _cursor: &mut Cursor<'new>) -> Result<(), Error> {
         Ok(())
     }
 
@@ -1098,14 +1101,17 @@ impl Encode for Encoder {
     }
 }
 
-/// A transform that appends a given option.
+/// A transform that appends the specified options.
 #[derive(Debug)]
-pub struct AppendOption<'a, Prev> {
+pub struct AppendOptions<Prev, I> {
     prev: Prev,
-    option: DhcpOption<'a>,
+    options: I,
 }
 
-impl<'a, Prev: Encode> Encode for AppendOption<'a, Prev> {
+impl<'a, Prev: Encode, I> Encode for AppendOptions<Prev, I>
+where
+    I: IntoIterator<Item = DhcpOption<'a>> + Clone,
+{
     #[inline]
     fn write_option<'old, 'new>(
         &mut self,
@@ -1117,14 +1123,22 @@ impl<'a, Prev: Encode> Encode for AppendOption<'a, Prev> {
     }
 
     #[inline]
-    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
         self.prev.write_new_options(cursor)?;
-        self.option.write(cursor)
+        self.options
+            .into_iter()
+            .try_for_each(|option| option.write(cursor))
     }
 
     #[inline]
     fn max_size_diff(&self) -> usize {
-        self.prev.max_size_diff() + self.option.size()
+        self.prev.max_size_diff()
+            + self
+                .options
+                .clone()
+                .into_iter()
+                .map(|option| option.size())
+                .sum::<usize>()
     }
 }
 
@@ -1156,7 +1170,7 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
     }
 
     #[inline]
-    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
         self.prev.write_new_options(cursor)?;
         if !self.replaced {
             self.option.write(cursor)?;
@@ -1196,7 +1210,7 @@ where
     }
 
     #[inline]
-    fn write_new_options<'new>(&mut self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
         self.prev.write_new_options(cursor)
     }
 
@@ -1303,8 +1317,10 @@ mod tests {
         let client_id = [/* type field */ 6, 0x06, 0, 0, 0, 0, 0];
         let chaddr = &client_id[1..];
         let mut msg = Encoder
-            .append_option(DhcpOption::MessageType(MessageType::DISCOVER))
-            .append_option(DhcpOption::ClientIdentifier(&client_id))
+            .append_options([
+                DhcpOption::MessageType(MessageType::DISCOVER),
+                DhcpOption::ClientIdentifier(&client_id),
+            ])
             .encode_to_owned(&Message::default())?;
         msg.set_chaddr(chaddr)?;
 
