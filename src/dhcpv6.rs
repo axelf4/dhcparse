@@ -70,8 +70,8 @@ pub enum MessageType {
     Decline,
     Reconfigure,
     InformationRequest,
-    RelayForw,
-    RelayRepl,
+    RelayForward,
+    RelayReply,
     Other(u8),
 }
 
@@ -90,8 +90,8 @@ impl From<u8> for MessageType {
             9 => Decline,
             10 => Reconfigure,
             11 => InformationRequest,
-            12 => RelayForw,
-            13 => RelayRepl,
+            12 => RelayForward,
+            13 => RelayReply,
             _ => Other(x),
         }
     }
@@ -112,8 +112,8 @@ impl From<MessageType> for u8 {
             Decline => 9,
             Reconfigure => 10,
             InformationRequest => 11,
-            RelayForw => 12,
-            RelayRepl => 13,
+            RelayForward => 12,
+            RelayReply => 13,
             Other(x) => x,
         }
     }
@@ -167,6 +167,9 @@ pub enum DhcpOption<'a> {
     /// The amount of time in hundredths of a second, since the client
     /// began its current DHCP transaction.
     ElapsedTime(u16),
+    /// Relay Message
+    ///
+    /// Carries a DHCP message in a Relay-forward or Relay-reply message.
     RelayMessage(&'a [u8]),
     ServerUnicast(&'a Addr),
     RapidCommit,
@@ -382,6 +385,15 @@ impl<T: AsRef<[u8]>> AsRef<[u8]> for Message<T> {
     }
 }
 
+impl<T> Message<T> {
+    /// Consumes the view and returns the underlying buffer.
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let Self(inner) = self;
+        inner
+    }
+}
+
 impl<T: AsRef<[u8]>> Message<T> {
     pub fn new(b: T) -> Result<Self, Error> {
         if b.as_ref().len() < 4 {
@@ -400,8 +412,33 @@ impl<T: AsRef<[u8]>> Message<T> {
         self.as_ref()[1..][..3].try_into().unwrap()
     }
 
+    /// Gets the number of relay agents that have already relayed this message.
+    ///
+    /// Only applicable for relay agent messages.
+    pub fn hop_count(&self) -> u8 {
+        self.as_ref()[1]
+    }
+
+    /// Gets the link-address.
+    ///
+    /// Only applicable for relay agent messages.
+    pub fn link_address(&self) -> &Addr {
+        self.as_ref()[2..].try_into().unwrap()
+    }
+
+    /// Gets the peer-address.
+    ///
+    /// Only applicable for relay agent messages.
+    pub fn peer_address(&self) -> &Addr {
+        self.as_ref()[18..].try_into().unwrap()
+    }
+
     /// Returns an iterator of the options.
     pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'_>, Error>> {
-        Options::new(&self.as_ref()[4..])
+        let offset = match self.msg_type() {
+            MessageType::RelayForward | MessageType::RelayReply => 34,
+            _ => 4,
+        };
+        Options::new(&self.as_ref()[offset..])
     }
 }

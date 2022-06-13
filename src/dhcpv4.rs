@@ -679,7 +679,7 @@ impl<T> Message<T> {
     /// Consumes the view and returns the underlying buffer.
     #[inline]
     pub fn into_inner(self) -> T {
-        let Message(inner) = self;
+        let Self(inner) = self;
         inner
     }
 }
