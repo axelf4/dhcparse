@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 use core::mem;
 use ref_cast::RefCast;
 
-use crate::Error;
+use crate::{Cursor, Error};
 
 /// The UDP port where clients listen for messages.
 pub const CLIENT_PORT: u16 = 546;
@@ -248,6 +248,73 @@ impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
     }
 }
 
+impl<'a> DhcpOption<'a> {
+    /// Returns the option code.
+    pub fn code(&self) -> u16 {
+        use option_code::*;
+        use DhcpOption::*;
+        match *self {
+            ClientIdentifier(_) => OPTION_CLIENTID,
+            ServerIdentifier(_) => OPTION_SERVERID,
+            IaNa(_) => OPTION_IA_NA,
+            OptionRequest(_) => OPTION_ORO,
+            Preference(_) => OPTION_PREFERENCE,
+            ElapsedTime(_) => OPTION_ELAPSED_TIME,
+            RelayMessage(_) => OPTION_RELAY_MSG,
+            ServerUnicast(_) => OPTION_UNICAST,
+            RapidCommit => OPTION_RAPID_COMMIT,
+            UserClass(_) => OPTION_USER_CLASS,
+            InterfaceId(_) => OPTION_INTERFACE_ID,
+            ReconfigureMessage(_) => OPTION_RECONF_MSG,
+            ReconfigureAccept => OPTION_RECONF_ACCEPT,
+            InformationRefreshTime(_) => OPTION_INFORMATION_REFRESH_TIME,
+            Other(code, _) => code,
+        }
+    }
+
+    /// Returns the value of the 'option-len' field.
+    pub fn length(&self) -> Result<u16, Error> {
+        use DhcpOption::*;
+        Ok(match *self {
+            ClientIdentifier(xs)
+            | ServerIdentifier(xs)
+            | IaNa(self::IaNa(xs))
+            | OptionRequest(self::OptionRequest(xs))
+            | RelayMessage(xs)
+            | UserClass(xs)
+            | InterfaceId(xs)
+            | Other(_, xs) => xs.len().try_into().map_err(|_| Error::Overflow)?,
+            Preference(_) | ReconfigureMessage(_) => 1,
+            ElapsedTime(_) => 2,
+            ServerUnicast(_) => 16,
+            RapidCommit | ReconfigureAccept => 0,
+            InformationRefreshTime(_) => 4,
+        })
+    }
+
+    pub fn write<'buf>(&self, cursor: &mut Cursor<'buf>) -> Result<(), Error> {
+        use DhcpOption::*;
+        cursor.write(&self.code().to_be_bytes())?;
+        cursor.write(&self.length()?.to_be_bytes())?;
+        match *self {
+            ClientIdentifier(xs)
+            | ServerIdentifier(xs)
+            | IaNa(self::IaNa(xs))
+            | OptionRequest(self::OptionRequest(xs))
+            | RelayMessage(xs)
+            | UserClass(xs)
+            | InterfaceId(xs)
+            | Other(_, xs) => cursor.write(xs),
+            Preference(x) => cursor.write_u8(x),
+            ElapsedTime(x) => cursor.write(&x.to_be_bytes()),
+            ServerUnicast(x) => cursor.write(&x.0),
+            RapidCommit | ReconfigureAccept => Ok(()),
+            ReconfigureMessage(x) => cursor.write_u8(x.into()),
+            InformationRefreshTime(x) => cursor.write(&x.to_be_bytes()),
+        }
+    }
+}
+
 /// Identity Association for Non-temporary Addresses (IA_NA).
 #[derive(Debug)]
 pub struct IaNa<'a>(&'a [u8]);
@@ -276,15 +343,15 @@ impl<'a> IaNa<'a> {
     }
 
     pub fn iaid(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[..4])
+        NetworkEndian::read_u32(&self.0)
     }
 
     pub fn t1(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[4..][..4])
+        NetworkEndian::read_u32(&self.0[4..])
     }
 
     pub fn t2(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[8..][..4])
+        NetworkEndian::read_u32(&self.0[8..])
     }
 
     pub fn options(&self) -> impl Iterator<Item = Result<IaNaOption<'a>, Error>> {
@@ -311,12 +378,12 @@ impl<'a> IaAddress<'a> {
 
     /// The preferred lifetime in seconds for the address in this option.
     pub fn preferred_lifetime(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[16..][..4])
+        NetworkEndian::read_u32(&self.0[16..])
     }
 
     /// The valid lifetime in seconds for the address in this option.
     pub fn valid_lifetime(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[20..][..4])
+        NetworkEndian::read_u32(&self.0[20..])
     }
 }
 
