@@ -540,13 +540,12 @@ impl<'a> DhcpOption<'a> {
     /// Returns the byte size of this option when serialized.
     fn size(&self) -> usize {
         use DhcpOption::*;
-        match self {
-            Pad
-            | IpForwarding(_)
-            | NonLocalSrcRouting(_)
-            | OptionOverload(_)
-            | MessageType(_)
-            | End => 1,
+        if matches!(*self, Pad | End) {
+            return 1;
+        }
+        2 + match *self {
+            Pad | End => unreachable!(),
+            IpForwarding(_) | NonLocalSrcRouting(_) | OptionOverload(_) | MessageType(_) => 1,
             SubnetMask(addr)
             | SwapServer(addr)
             | RequestedIpAddress(addr)
@@ -1333,5 +1332,11 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn option_size_includes_code_and_len() {
+        assert_eq!(DhcpOption::End.size(), 1);
+        assert_eq!(DhcpOption::MessageType(MessageType::DISCOVER).size(), 3);
     }
 }
