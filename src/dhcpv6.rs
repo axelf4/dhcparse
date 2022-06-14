@@ -343,7 +343,7 @@ impl<'a> IaNa<'a> {
     }
 
     pub fn iaid(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0)
+        NetworkEndian::read_u32(self.0)
     }
 
     pub fn t1(&self) -> u32 {

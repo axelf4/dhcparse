@@ -1012,7 +1012,7 @@ pub trait Encode: private::Sealed {
     ) -> Result<(), Error>;
 
     #[doc(hidden)]
-    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error>;
+    fn write_new_options(self, cursor: &mut Cursor) -> Result<(), Error>;
 
     /// Returns the largest byte size increase this encoder can incur
     /// when reencoding any message.
@@ -1020,7 +1020,7 @@ pub trait Encode: private::Sealed {
 
     /// Returns a new transform that additionally appends the given options.
     #[inline]
-    fn append_options<'a, I>(self, options: I) -> AppendOptions<Self, I>
+    fn append_options<I>(self, options: I) -> AppendOptions<Self, I>
     where
         Self: Sized,
     {
@@ -1086,7 +1086,7 @@ impl Encode for Encoder {
     }
 
     #[inline]
-    fn write_new_options<'new>(self, _cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options(self, _cursor: &mut Cursor) -> Result<(), Error> {
         Ok(())
     }
 
@@ -1122,7 +1122,7 @@ where
     }
 
     #[inline]
-    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options(self, cursor: &mut Cursor) -> Result<(), Error> {
         self.prev.write_new_options(cursor)?;
         self.options
             .into_iter()
@@ -1169,7 +1169,7 @@ impl<'a, Prev: Encode> Encode for SetOption<'a, Prev> {
     }
 
     #[inline]
-    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options(self, cursor: &mut Cursor) -> Result<(), Error> {
         self.prev.write_new_options(cursor)?;
         if !self.replaced {
             self.option.write(cursor)?;
@@ -1209,7 +1209,7 @@ where
     }
 
     #[inline]
-    fn write_new_options<'new>(self, cursor: &mut Cursor<'new>) -> Result<(), Error> {
+    fn write_new_options(self, cursor: &mut Cursor) -> Result<(), Error> {
         self.prev.write_new_options(cursor)
     }
 
