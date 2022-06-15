@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 use core::mem;
 use ref_cast::RefCast;
 
-use crate::{Cursor, Error};
+use crate::Error;
 
 /// The UDP port where clients listen for messages.
 pub const CLIENT_PORT: u16 = 546;
@@ -292,10 +292,18 @@ impl<'a> DhcpOption<'a> {
         })
     }
 
-    pub fn write<'buf>(&self, cursor: &mut Cursor<'buf>) -> Result<(), Error> {
+    #[cfg(feature = "std")]
+    pub fn write<'buf>(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
         use DhcpOption::*;
-        cursor.write(&self.code().to_be_bytes())?;
-        cursor.write(&self.length()?.to_be_bytes())?;
+        writer.write_all(&self.code().to_be_bytes())?;
+        writer.write_all(
+            &self
+                .length()
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "too long length")
+                })?
+                .to_be_bytes(),
+        )?;
         match *self {
             ClientIdentifier(xs)
             | ServerIdentifier(xs)
@@ -304,13 +312,13 @@ impl<'a> DhcpOption<'a> {
             | RelayMessage(xs)
             | UserClass(xs)
             | InterfaceId(xs)
-            | Other(_, xs) => cursor.write(xs),
-            Preference(x) => cursor.write_u8(x),
-            ElapsedTime(x) => cursor.write(&x.to_be_bytes()),
-            ServerUnicast(x) => cursor.write(&x.0),
+            | Other(_, xs) => writer.write_all(xs),
+            Preference(x) => writer.write_all(&[x]),
+            ElapsedTime(x) => writer.write_all(&x.to_be_bytes()),
+            ServerUnicast(x) => writer.write_all(&x.0),
             RapidCommit | ReconfigureAccept => Ok(()),
-            ReconfigureMessage(x) => cursor.write_u8(x.into()),
-            InformationRefreshTime(x) => cursor.write(&x.to_be_bytes()),
+            ReconfigureMessage(x) => writer.write_all(&[x.into()]),
+            InformationRefreshTime(x) => writer.write_all(&x.to_be_bytes()),
         }
     }
 }
