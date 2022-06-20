@@ -70,9 +70,8 @@ See:
 use bitflags::bitflags;
 use byteorder::{ByteOrder, NetworkEndian};
 use core::convert::{TryFrom, TryInto};
-use core::fmt;
 use core::iter::FusedIterator;
-use core::mem;
+use core::{fmt, mem, slice};
 use memchr::memchr;
 use ref_cast::RefCast;
 
@@ -314,7 +313,12 @@ fn read_addrs(b: &[u8]) -> Result<&[Addr], Error> {
         return Err(Error::Malformed);
     }
     // Safety: Ok, since Addr has same representation as [u8; 4].
-    Ok(unsafe { &*(b as *const [u8] as *const [Addr]) })
+    Ok(unsafe {
+        slice::from_raw_parts(
+            b as *const [u8] as *const Addr,
+            b.len() / mem::size_of::<Addr>(),
+        )
+    })
 }
 
 #[inline]
@@ -323,7 +327,12 @@ fn read_addr_pairs(b: &[u8]) -> Result<&[[Addr; 2]], Error> {
         return Err(Error::Malformed);
     }
     // Safety: Ok, since Addr has same representation as [u8; 4].
-    Ok(unsafe { &*(b as *const [u8] as *const [[Addr; 2]]) })
+    Ok(unsafe {
+        slice::from_raw_parts(
+            b as *const [u8] as *const [Addr; 2],
+            b.len() / mem::size_of::<[Addr; 2]>(),
+        )
+    })
 }
 
 impl<'a> DhcpOption<'a> {
@@ -490,7 +499,12 @@ impl<'a> DhcpOption<'a> {
             | ImpressServer(addrs)
             | ResourceLocationServer(addrs) => {
                 // Safety: Addr has the same representation as [u8; 4]
-                let xs = unsafe { &*(addrs as *const [Addr] as *const [u8]) };
+                let xs = unsafe {
+                    slice::from_raw_parts(
+                        addrs as *const [Addr] as *const u8,
+                        addrs.len() * mem::size_of::<Addr>(),
+                    )
+                };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
             }
@@ -518,7 +532,12 @@ impl<'a> DhcpOption<'a> {
             }
             PolicyFilter(addr_pairs) => {
                 // Safety: Addr has the same representation as [u8; 4]
-                let xs = unsafe { &*(addr_pairs as *const [[Addr; 2]] as *const [u8]) };
+                let xs = unsafe {
+                    slice::from_raw_parts(
+                        addr_pairs as *const [[Addr; 2]] as *const u8,
+                        addr_pairs.len() * mem::size_of::<[Addr; 2]>(),
+                    )
+                };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
                 cursor.write(xs)
             }
@@ -1033,9 +1052,9 @@ pub trait Encode: private::Sealed {
     /// Returns a new transform that additionally sets the given option.
     ///
     /// For setting options that need more than 255 bytes of data, use
-    /// a combination of [`append_option`] and [`filter_options`].
+    /// a combination of [`append_options`] and [`filter_options`].
     ///
-    /// [`append_option`]: Self::append_option
+    /// [`append_options`]: Self::append_options
     /// [`filter_options`]: Self::filter_options
     #[inline]
     fn set_option(self, option: DhcpOption<'_>) -> SetOption<'_, Self>

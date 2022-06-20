@@ -304,7 +304,7 @@ impl<'a> DhcpOption<'a> {
     }
 
     #[cfg(feature = "std")]
-    pub fn write<'buf>(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
+    pub fn write(&self, mut writer: impl std::io::Write) -> std::io::Result<()> {
         use DhcpOption::*;
         writer.write_all(&self.code().to_be_bytes())?;
         writer.write_all(
