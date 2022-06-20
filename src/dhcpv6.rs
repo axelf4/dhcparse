@@ -156,6 +156,7 @@ pub mod option_code {
     pub const OPTION_RECONF_ACCEPT: u16 = 20;
     pub const OPTION_INFORMATION_REFRESH_TIME: u16 = 32;
     pub const OPTION_ERO: u16 = 43;
+    pub const OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
 }
 
 /// Top-level DHCP option.
@@ -194,6 +195,10 @@ pub enum DhcpOption<'a> {
     /// The value [`u32::MAX`] is taken to mean "infinity".
     InformationRefreshTime(u32),
     RelayAgentEchoRequest(&'a [u8]),
+    /// DHCPv6 Client Link-Layer Address
+    ///
+    /// See: RFC6939
+    ClientLinkLayerAddress(&'a [u8]),
     Other(u16, &'a [u8]),
 }
 
@@ -262,6 +267,7 @@ impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
                 }
                 Self::RelayAgentEchoRequest(data)
             }
+            OPTION_CLIENT_LINKLAYER_ADDR => Self::ClientLinkLayerAddress(data),
             _ => Self::Other(code, data),
         })
     }
@@ -288,6 +294,7 @@ impl<'a> DhcpOption<'a> {
             ReconfigureAccept => OPTION_RECONF_ACCEPT,
             InformationRefreshTime(_) => OPTION_INFORMATION_REFRESH_TIME,
             RelayAgentEchoRequest(_) => OPTION_ERO,
+            ClientLinkLayerAddress(_) => OPTION_CLIENT_LINKLAYER_ADDR,
             Other(code, _) => code,
         }
     }
@@ -304,6 +311,7 @@ impl<'a> DhcpOption<'a> {
             | UserClass(xs)
             | InterfaceId(xs)
             | RelayAgentEchoRequest(xs)
+            | ClientLinkLayerAddress(xs)
             | Other(_, xs) => xs.len().try_into().map_err(|_| Error::Overflow)?,
             Preference(_) | ReconfigureMessage(_) => 1,
             ElapsedTime(_) => 2,
@@ -334,6 +342,7 @@ impl<'a> DhcpOption<'a> {
             | UserClass(xs)
             | InterfaceId(xs)
             | RelayAgentEchoRequest(xs)
+            | ClientLinkLayerAddress(xs)
             | Other(_, xs) => writer.write_all(xs),
             Preference(x) => writer.write_all(&[x]),
             ElapsedTime(x) => writer.write_all(&x.to_be_bytes()),
