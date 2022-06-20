@@ -21,6 +21,17 @@ use crate::Error;
 pub const CLIENT_PORT: u16 = 546;
 /// The UDP port where servers and relay agents listen for messages.
 pub const SERVER_PORT: u16 = 547;
+/// A link-scoped multicast address for clients to communicate with on-link relay agents and servers.
+pub const ALL_DHCP_RELAY_AGENTS_AND_SERVERS: Addr = Addr([
+    0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0x00, 0x02,
+]);
+/// A site-scoped multicast address for relay agents to communicate with servers.
+///
+/// To be used if a relay agents wants to send messages to all servers
+/// or because it does not know the unicast addresses of the servers.
+pub const ALL_DHCP_SERVERS: Addr = Addr([
+    0xff, 0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0x00, 0x03,
+]);
 
 /// An IPv6 address.
 #[derive(Clone, Copy, PartialEq, Eq, RefCast, Debug)]
