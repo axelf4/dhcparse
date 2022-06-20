@@ -155,6 +155,7 @@ pub mod option_code {
     pub const OPTION_RECONF_MSG: u16 = 19;
     pub const OPTION_RECONF_ACCEPT: u16 = 20;
     pub const OPTION_INFORMATION_REFRESH_TIME: u16 = 32;
+    pub const OPTION_ERO: u16 = 43;
 }
 
 /// Top-level DHCP option.
@@ -192,6 +193,7 @@ pub enum DhcpOption<'a> {
     ///
     /// The value [`u32::MAX`] is taken to mean "infinity".
     InformationRefreshTime(u32),
+    RelayAgentEchoRequest(&'a [u8]),
     Other(u16, &'a [u8]),
 }
 
@@ -254,6 +256,12 @@ impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
                 }
                 Self::InformationRefreshTime(NetworkEndian::read_u32(data))
             }
+            OPTION_ERO => {
+                if data.len() % 2 != 0 {
+                    return Err(Error::Malformed);
+                }
+                Self::RelayAgentEchoRequest(data)
+            }
             _ => Self::Other(code, data),
         })
     }
@@ -279,6 +287,7 @@ impl<'a> DhcpOption<'a> {
             ReconfigureMessage(_) => OPTION_RECONF_MSG,
             ReconfigureAccept => OPTION_RECONF_ACCEPT,
             InformationRefreshTime(_) => OPTION_INFORMATION_REFRESH_TIME,
+            RelayAgentEchoRequest(_) => OPTION_ERO,
             Other(code, _) => code,
         }
     }
@@ -294,6 +303,7 @@ impl<'a> DhcpOption<'a> {
             | RelayMessage(xs)
             | UserClass(xs)
             | InterfaceId(xs)
+            | RelayAgentEchoRequest(xs)
             | Other(_, xs) => xs.len().try_into().map_err(|_| Error::Overflow)?,
             Preference(_) | ReconfigureMessage(_) => 1,
             ElapsedTime(_) => 2,
@@ -323,6 +333,7 @@ impl<'a> DhcpOption<'a> {
             | RelayMessage(xs)
             | UserClass(xs)
             | InterfaceId(xs)
+            | RelayAgentEchoRequest(xs)
             | Other(_, xs) => writer.write_all(xs),
             Preference(x) => writer.write_all(&[x]),
             ElapsedTime(x) => writer.write_all(&x.to_be_bytes()),
