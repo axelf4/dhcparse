@@ -11,7 +11,6 @@ See:
 
 use byteorder::{ByteOrder, NetworkEndian};
 use core::convert::{TryFrom, TryInto};
-use core::marker::PhantomData;
 use core::mem;
 use ref_cast::RefCast;
 
@@ -175,10 +174,84 @@ impl From<StatusCode> for u16 {
     }
 }
 
-trait FromOptionCodeData<'a> {
-    fn from(code: u16, data: &'a [u8]) -> Result<Self, Error>
-    where
-        Self: Sized;
+/// Identity Association for Non-temporary Addresses (IA_NA).
+#[derive(Debug)]
+pub struct IaNa<'a>(&'a [u8]);
+
+impl<'a> IaNa<'a> {
+    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() < 12 {
+            return Err(Error::Underflow);
+        }
+        Ok(Self(b))
+    }
+
+    pub fn iaid(&self) -> u32 {
+        NetworkEndian::read_u32(self.0)
+    }
+
+    pub fn t1(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[4..])
+    }
+
+    pub fn t2(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[8..])
+    }
+
+    pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
+        Options::new(&self.0[12..])
+    }
+}
+
+/// The IA Address option, specifying an address associated with an
+/// [IA_NA](IaNa) or IA_TA.
+#[derive(Debug)]
+pub struct IaAddress<'a>(&'a [u8]);
+
+impl<'a> IaAddress<'a> {
+    fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() < 24 {
+            return Err(Error::Underflow);
+        }
+        Ok(Self(b))
+    }
+
+    pub fn addr(&self) -> &'a Addr {
+        self.0.try_into().unwrap()
+    }
+
+    /// The preferred lifetime in seconds for the address in this option.
+    pub fn preferred_lifetime(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[16..])
+    }
+
+    /// The valid lifetime in seconds for the address in this option.
+    pub fn valid_lifetime(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[20..])
+    }
+
+    /// Returns an iterator over the 'IAaddr-options' associated with this address.
+    pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
+        Options::new(&self.0[24..])
+    }
+}
+
+/// The data of the Option Request option.
+#[derive(Clone, Debug)]
+pub struct OptionRequest<'a>(&'a [u8]);
+
+impl<'a> OptionRequest<'a> {
+    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() % 2 != 0 {
+            return Err(Error::Malformed);
+        }
+        Ok(Self(b))
+    }
+
+    /// Returns an iterator over the codes of the requested option types.
+    pub fn requested_options(&self) -> impl Iterator<Item = u16> + 'a {
+        self.0.chunks(2).map(NetworkEndian::read_u16)
+    }
 }
 
 /// The DHCP option codes identifiying the specific option types.
@@ -205,7 +278,10 @@ pub mod option_code {
     pub const OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
 }
 
-/// Top-level DHCP option.
+/// DHCPv6 option.
+///
+/// Some option variants may only be encapsulated in sub-option fields
+/// of specific options.
 #[derive(Debug)]
 pub enum DhcpOption<'a> {
     /// Client Identifier
@@ -218,6 +294,7 @@ pub enum DhcpOption<'a> {
     ServerIdentifier(&'a [u8]),
     /// Identity Association for Non-temporary Addresses
     IaNa(IaNa<'a>),
+    IaAddress(IaAddress<'a>),
     OptionRequest(OptionRequest<'a>),
     /// Preference
     Preference(u8),
@@ -252,13 +329,14 @@ pub enum DhcpOption<'a> {
     Other(u16, &'a [u8]),
 }
 
-impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
-    fn from(code: u16, data: &'a [u8]) -> Result<Self, Error> {
+impl<'a> DhcpOption<'a> {
+    fn new(code: u16, data: &'a [u8]) -> Result<Self, Error> {
         use option_code::*;
         Ok(match code {
             OPTION_CLIENTID => Self::ClientIdentifier(data),
             OPTION_SERVERID => Self::ServerIdentifier(data),
             OPTION_IA_NA => Self::IaNa(IaNa::new(data)?),
+            OPTION_IAADDR => Self::IaAddress(IaAddress::new(data)?),
             OPTION_ORO => Self::OptionRequest(OptionRequest::new(data)?),
             OPTION_PREFERENCE => {
                 if data.len() != 1 {
@@ -328,9 +406,7 @@ impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
             _ => Self::Other(code, data),
         })
     }
-}
 
-impl<'a> DhcpOption<'a> {
     /// Returns the option code.
     pub fn code(&self) -> u16 {
         use option_code::*;
@@ -339,6 +415,7 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(_) => OPTION_CLIENTID,
             ServerIdentifier(_) => OPTION_SERVERID,
             IaNa(_) => OPTION_IA_NA,
+            IaAddress(_) => OPTION_IAADDR,
             OptionRequest(_) => OPTION_ORO,
             Preference(_) => OPTION_PREFERENCE,
             ElapsedTime(_) => OPTION_ELAPSED_TIME,
@@ -364,6 +441,7 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(xs)
             | ServerIdentifier(xs)
             | IaNa(self::IaNa(xs))
+            | IaAddress(self::IaAddress(xs))
             | OptionRequest(self::OptionRequest(xs))
             | RelayMessage(xs)
             | UserClass(xs)
@@ -396,6 +474,7 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(xs)
             | ServerIdentifier(xs)
             | IaNa(self::IaNa(xs))
+            | IaAddress(self::IaAddress(xs))
             | OptionRequest(self::OptionRequest(xs))
             | RelayMessage(xs)
             | UserClass(xs)
@@ -417,116 +496,20 @@ impl<'a> DhcpOption<'a> {
     }
 }
 
-/// Identity Association for Non-temporary Addresses (IA_NA).
-#[derive(Debug)]
-pub struct IaNa<'a>(&'a [u8]);
-
-/// An [IA_NA](IaNa) option.
-#[derive(Debug)]
-pub enum IaNaOption<'a> {
-    IaAddress(IaAddress<'a>),
-}
-
-impl<'a> FromOptionCodeData<'a> for IaNaOption<'a> {
-    fn from(code: u16, data: &'a [u8]) -> Result<Self, Error> {
-        Ok(match code {
-            option_code::OPTION_IAADDR => Self::IaAddress(IaAddress::new(data)?),
-            _ => return Err(Error::Malformed),
-        })
-    }
-}
-
-impl<'a> IaNa<'a> {
-    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
-        if b.len() < 12 {
-            return Err(Error::Underflow);
-        }
-        Ok(Self(b))
-    }
-
-    pub fn iaid(&self) -> u32 {
-        NetworkEndian::read_u32(self.0)
-    }
-
-    pub fn t1(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[4..])
-    }
-
-    pub fn t2(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[8..])
-    }
-
-    pub fn options(&self) -> impl Iterator<Item = Result<IaNaOption<'a>, Error>> {
-        Options::new(&self.0[12..])
-    }
-}
-
-/// The IA Address option, specifying an address associated with an
-/// [IA_NA](IaNa) or IA_TA.
-#[derive(Debug)]
-pub struct IaAddress<'a>(&'a [u8]);
-
-impl<'a> IaAddress<'a> {
-    fn new(b: &'a [u8]) -> Result<Self, Error> {
-        if b.len() < 24 {
-            return Err(Error::Underflow);
-        }
-        Ok(Self(b))
-    }
-
-    pub fn addr(&self) -> &'a Addr {
-        self.0.try_into().unwrap()
-    }
-
-    /// The preferred lifetime in seconds for the address in this option.
-    pub fn preferred_lifetime(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[16..])
-    }
-
-    /// The valid lifetime in seconds for the address in this option.
-    pub fn valid_lifetime(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0[20..])
-    }
-}
-
-/// The data of the Option Request option.
-#[derive(Clone, Debug)]
-pub struct OptionRequest<'a>(&'a [u8]);
-
-impl<'a> OptionRequest<'a> {
-    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
-        if b.len() % 2 != 0 {
-            return Err(Error::Malformed);
-        }
-        Ok(Self(b))
-    }
-
-    /// Returns an iterator over the codes of the requested option types.
-    pub fn requested_options(&self) -> impl Iterator<Item = u16> + 'a {
-        self.0.chunks(2).map(NetworkEndian::read_u16)
-    }
-}
-
 /// Iterator of options in variable-length fields.
-struct Options<'a, T> {
-    b: &'a [u8],
-    option_type: PhantomData<T>,
-}
+struct Options<'a>(&'a [u8]);
 
-impl<T> Options<'_, T> {
-    fn new(b: &[u8]) -> Options<'_, T> {
-        Options {
-            b,
-            option_type: PhantomData,
-        }
+impl<'a> Options<'a> {
+    fn new(b: &'a [u8]) -> Self {
+        Self(b)
     }
 }
 
-impl<'a, T: FromOptionCodeData<'a>> Iterator for Options<'a, T> {
-    type Item = Result<T, Error>;
+impl<'a> Iterator for Options<'a> {
+    type Item = Result<DhcpOption<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match *self.b {
+        match *self.0 {
             [] => None,
             [c0, c1, l0, l1, ref rest @ ..] => {
                 let code = NetworkEndian::read_u16(&[c0, c1]);
@@ -535,8 +518,8 @@ impl<'a, T: FromOptionCodeData<'a>> Iterator for Options<'a, T> {
                     return Some(Err(Error::Malformed));
                 }
                 let (data, newb) = rest.split_at(len);
-                self.b = newb;
-                Some(T::from(code, data))
+                self.0 = newb;
+                Some(DhcpOption::new(code, data))
             }
             _ => Some(Err(Error::Underflow)),
         }
