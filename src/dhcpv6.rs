@@ -130,6 +130,51 @@ impl From<MessageType> for u8 {
     }
 }
 
+/// Statuses of DHCP messages or options.
+///
+/// See the ["Status Codes" registry](https://www.iana.org/assignments/dhcpv6-parameters)
+/// for the current list of status codes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StatusCode {
+    Success,
+    UnspecFail,
+    NoAddrsAvail,
+    NoBinding,
+    UseMulticast,
+    NoPrefixAvail,
+    Other(u16),
+}
+
+impl From<u16> for StatusCode {
+    fn from(x: u16) -> Self {
+        use StatusCode::*;
+        match x {
+            0 => Success,
+            1 => UnspecFail,
+            2 => NoAddrsAvail,
+            3 => NoBinding,
+            4 => UseMulticast,
+            5 => NoPrefixAvail,
+            _ => Other(x),
+        }
+    }
+}
+
+impl From<StatusCode> for u16 {
+    fn from(x: StatusCode) -> u16 {
+        use StatusCode::*;
+        match x {
+            Success => 0,
+            UnspecFail => 1,
+            NoAddrsAvail => 2,
+            NoBinding => 3,
+            UseMulticast => 4,
+            NoPrefixAvail => 5,
+            Other(x) => x,
+        }
+    }
+}
+
 trait FromOptionCodeData<'a> {
     fn from(code: u16, data: &'a [u8]) -> Result<Self, Error>
     where
@@ -154,6 +199,7 @@ pub mod option_code {
     pub const OPTION_INTERFACE_ID: u16 = 18;
     pub const OPTION_RECONF_MSG: u16 = 19;
     pub const OPTION_RECONF_ACCEPT: u16 = 20;
+    pub const OPTION_STATUS_CODE: u16 = 24;
     pub const OPTION_INFORMATION_REFRESH_TIME: u16 = 32;
     pub const OPTION_ERO: u16 = 43;
     pub const OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
@@ -190,6 +236,10 @@ pub enum DhcpOption<'a> {
     InterfaceId(&'a [u8]),
     ReconfigureMessage(MessageType),
     ReconfigureAccept,
+    /// Status Code
+    ///
+    /// The status-message is a UTF-8 encoded string that is not null-terminated.
+    StatusCode(StatusCode, &'a [u8]),
     /// Information Refresh Time
     ///
     /// The value [`u32::MAX`] is taken to mean "infinity".
@@ -197,7 +247,7 @@ pub enum DhcpOption<'a> {
     RelayAgentEchoRequest(&'a [u8]),
     /// DHCPv6 Client Link-Layer Address
     ///
-    /// See: RFC6939
+    /// See: [RFC6939](https://datatracker.ietf.org/doc/html/rfc8415)
     ClientLinkLayerAddress(&'a [u8]),
     Other(u16, &'a [u8]),
 }
@@ -255,6 +305,13 @@ impl<'a> FromOptionCodeData<'a> for DhcpOption<'a> {
                 }
                 Self::ReconfigureAccept
             }
+            OPTION_STATUS_CODE => {
+                if data.len() < 2 {
+                    return Err(Error::Malformed);
+                }
+                let (status, msg) = data.split_at(2);
+                Self::StatusCode(u16::from_be_bytes(status.try_into().unwrap()).into(), msg)
+            }
             OPTION_INFORMATION_REFRESH_TIME => {
                 if data.len() != 4 {
                     return Err(Error::Malformed);
@@ -292,6 +349,7 @@ impl<'a> DhcpOption<'a> {
             InterfaceId(_) => OPTION_INTERFACE_ID,
             ReconfigureMessage(_) => OPTION_RECONF_MSG,
             ReconfigureAccept => OPTION_RECONF_ACCEPT,
+            StatusCode(_, _) => OPTION_STATUS_CODE,
             InformationRefreshTime(_) => OPTION_INFORMATION_REFRESH_TIME,
             RelayAgentEchoRequest(_) => OPTION_ERO,
             ClientLinkLayerAddress(_) => OPTION_CLIENT_LINKLAYER_ADDR,
@@ -317,6 +375,7 @@ impl<'a> DhcpOption<'a> {
             ElapsedTime(_) => 2,
             ServerUnicast(_) => 16,
             RapidCommit | ReconfigureAccept => 0,
+            StatusCode(_, xs) => (2 + xs.len()).try_into().map_err(|_| Error::Overflow)?,
             InformationRefreshTime(_) => 4,
         })
     }
@@ -349,6 +408,10 @@ impl<'a> DhcpOption<'a> {
             ServerUnicast(x) => writer.write_all(&x.0),
             RapidCommit | ReconfigureAccept => Ok(()),
             ReconfigureMessage(x) => writer.write_all(&[x.into()]),
+            StatusCode(status, xs) => {
+                writer.write_all(&u16::to_be_bytes(status.into()))?;
+                writer.write_all(xs)
+            }
             InformationRefreshTime(x) => writer.write_all(&x.to_be_bytes()),
         }
     }
