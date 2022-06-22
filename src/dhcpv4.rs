@@ -268,6 +268,8 @@ pub enum DhcpOption<'a> {
     /// 50 Requested IP Address
     RequestedIpAddress(&'a Addr),
     /// 51 IP Address Lease Time
+    ///
+    /// The time is in units of seconds.
     AddressLeaseTime(u32),
     /// 52 Option Overload
     OptionOverload(OptionOverload),

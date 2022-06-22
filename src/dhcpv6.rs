@@ -186,6 +186,7 @@ impl<'a> IaNa<'a> {
         Ok(Self(b))
     }
 
+    /// Returns the unique identifier for this IA_NA.
     pub fn iaid(&self) -> u32 {
         NetworkEndian::read_u32(self.0)
     }
@@ -200,6 +201,28 @@ impl<'a> IaNa<'a> {
 
     pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
         Options::new(&self.0[12..])
+    }
+}
+
+/// Identity Association for Temporary Addresses (IA_TA).
+#[derive(Debug)]
+pub struct IaTa<'a>(&'a [u8]);
+
+impl<'a> IaTa<'a> {
+    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() < 4 {
+            return Err(Error::Underflow);
+        }
+        Ok(Self(b))
+    }
+
+    /// Returns the unique identifier for this IA_TA.
+    pub fn iaid(&self) -> u32 {
+        NetworkEndian::read_u32(self.0)
+    }
+
+    pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
+        Options::new(&self.0[4..])
     }
 }
 
@@ -254,6 +277,72 @@ impl<'a> OptionRequest<'a> {
     }
 }
 
+/// Identity Association for Prefix Delegation (IA_PD).
+#[derive(Debug)]
+pub struct IaPd<'a>(&'a [u8]);
+
+impl<'a> IaPd<'a> {
+    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() < 12 {
+            return Err(Error::Underflow);
+        }
+        Ok(Self(b))
+    }
+
+    /// Returns the unique identifier for this IA_PD.
+    pub fn iaid(&self) -> u32 {
+        NetworkEndian::read_u32(self.0)
+    }
+
+    pub fn t1(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[4..])
+    }
+
+    pub fn t2(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[8..])
+    }
+
+    pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
+        Options::new(&self.0[12..])
+    }
+}
+
+#[derive(Debug)]
+pub struct IaPrefix<'a>(&'a [u8]);
+
+impl<'a> IaPrefix<'a> {
+    pub fn new(b: &'a [u8]) -> Result<Self, Error> {
+        if b.len() < 25 {
+            return Err(Error::Underflow);
+        }
+        Ok(Self(b))
+    }
+
+    /// The preferred lifetime in seconds for the prefix in this option.
+    pub fn preferred_lifetime(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0)
+    }
+
+    /// The valid lifetime in seconds for the prefix in this option.
+    pub fn valid_lifetime(&self) -> u32 {
+        NetworkEndian::read_u32(&self.0[4..])
+    }
+
+    /// Length for this prefix in bits.
+    pub fn prefix_len(&self) -> u8 {
+        self.0[8]
+    }
+
+    /// Returns the IPv6 prefix.
+    pub fn ipv6_prefix(&self) -> &'a Addr {
+        self.0[9..].try_into().unwrap()
+    }
+
+    pub fn options(&self) -> impl Iterator<Item = Result<DhcpOption<'a>, Error>> {
+        Options::new(&self.0[25..])
+    }
+}
+
 /// The DHCP option codes identifiying the specific option types.
 #[allow(missing_docs)]
 pub mod option_code {
@@ -273,6 +362,8 @@ pub mod option_code {
     pub const OPTION_RECONF_MSG: u16 = 19;
     pub const OPTION_RECONF_ACCEPT: u16 = 20;
     pub const OPTION_STATUS_CODE: u16 = 24;
+    pub const OPTION_IA_PD: u16 = 25;
+    pub const OPTION_IAPREFIX: u16 = 26;
     pub const OPTION_INFORMATION_REFRESH_TIME: u16 = 32;
     pub const OPTION_ERO: u16 = 43;
     pub const OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
@@ -294,6 +385,7 @@ pub enum DhcpOption<'a> {
     ServerIdentifier(&'a [u8]),
     /// Identity Association for Non-temporary Addresses
     IaNa(IaNa<'a>),
+    IaTa(IaTa<'a>),
     IaAddress(IaAddress<'a>),
     OptionRequest(OptionRequest<'a>),
     /// Preference
@@ -317,6 +409,8 @@ pub enum DhcpOption<'a> {
     ///
     /// The status-message is a UTF-8 encoded string that is not null-terminated.
     StatusCode(StatusCode, &'a [u8]),
+    IaPd(IaPd<'a>),
+    IaPrefix(IaPrefix<'a>),
     /// Information Refresh Time
     ///
     /// The value [`u32::MAX`] is taken to mean "infinity".
@@ -336,6 +430,7 @@ impl<'a> DhcpOption<'a> {
             OPTION_CLIENTID => Self::ClientIdentifier(data),
             OPTION_SERVERID => Self::ServerIdentifier(data),
             OPTION_IA_NA => Self::IaNa(IaNa::new(data)?),
+            OPTION_IA_TA => Self::IaTa(IaTa::new(data)?),
             OPTION_IAADDR => Self::IaAddress(IaAddress::new(data)?),
             OPTION_ORO => Self::OptionRequest(OptionRequest::new(data)?),
             OPTION_PREFERENCE => {
@@ -390,6 +485,8 @@ impl<'a> DhcpOption<'a> {
                 let (status, msg) = data.split_at(2);
                 Self::StatusCode(u16::from_be_bytes(status.try_into().unwrap()).into(), msg)
             }
+            OPTION_IA_PD => Self::IaPd(IaPd::new(data)?),
+            OPTION_IAPREFIX => Self::IaPrefix(IaPrefix::new(data)?),
             OPTION_INFORMATION_REFRESH_TIME => {
                 if data.len() != 4 {
                     return Err(Error::Malformed);
@@ -415,6 +512,7 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(_) => OPTION_CLIENTID,
             ServerIdentifier(_) => OPTION_SERVERID,
             IaNa(_) => OPTION_IA_NA,
+            IaTa(_) => OPTION_IA_TA,
             IaAddress(_) => OPTION_IAADDR,
             OptionRequest(_) => OPTION_ORO,
             Preference(_) => OPTION_PREFERENCE,
@@ -427,6 +525,8 @@ impl<'a> DhcpOption<'a> {
             ReconfigureMessage(_) => OPTION_RECONF_MSG,
             ReconfigureAccept => OPTION_RECONF_ACCEPT,
             StatusCode(_, _) => OPTION_STATUS_CODE,
+            IaPd(_) => OPTION_IA_PD,
+            IaPrefix(_) => OPTION_IAPREFIX,
             InformationRefreshTime(_) => OPTION_INFORMATION_REFRESH_TIME,
             RelayAgentEchoRequest(_) => OPTION_ERO,
             ClientLinkLayerAddress(_) => OPTION_CLIENT_LINKLAYER_ADDR,
@@ -441,11 +541,14 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(xs)
             | ServerIdentifier(xs)
             | IaNa(self::IaNa(xs))
+            | IaTa(self::IaTa(xs))
             | IaAddress(self::IaAddress(xs))
             | OptionRequest(self::OptionRequest(xs))
             | RelayMessage(xs)
             | UserClass(xs)
             | InterfaceId(xs)
+            | IaPd(self::IaPd(xs))
+            | IaPrefix(self::IaPrefix(xs))
             | RelayAgentEchoRequest(xs)
             | ClientLinkLayerAddress(xs)
             | Other(_, xs) => xs.len().try_into().map_err(|_| Error::Overflow)?,
@@ -474,11 +577,14 @@ impl<'a> DhcpOption<'a> {
             ClientIdentifier(xs)
             | ServerIdentifier(xs)
             | IaNa(self::IaNa(xs))
+            | IaTa(self::IaTa(xs))
             | IaAddress(self::IaAddress(xs))
             | OptionRequest(self::OptionRequest(xs))
             | RelayMessage(xs)
             | UserClass(xs)
             | InterfaceId(xs)
+            | IaPd(self::IaPd(xs))
+            | IaPrefix(self::IaPrefix(xs))
             | RelayAgentEchoRequest(xs)
             | ClientLinkLayerAddress(xs)
             | Other(_, xs) => writer.write_all(xs),
