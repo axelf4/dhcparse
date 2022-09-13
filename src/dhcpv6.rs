@@ -60,8 +60,8 @@ impl From<Addr> for std::net::Ipv6Addr {
 #[cfg(feature = "std")]
 impl From<std::net::Ipv6Addr> for Addr {
     #[inline]
-    fn from(x: std::net::Ipv6Addr) -> Addr {
-        Addr(x.octets())
+    fn from(x: std::net::Ipv6Addr) -> Self {
+        Self(x.octets())
     }
 }
 
@@ -108,7 +108,7 @@ impl From<u8> for MessageType {
 }
 
 impl From<MessageType> for u8 {
-    fn from(x: MessageType) -> u8 {
+    fn from(x: MessageType) -> Self {
         use MessageType::*;
         match x {
             Solicit => 1,
@@ -160,7 +160,7 @@ impl From<u16> for StatusCode {
 }
 
 impl From<StatusCode> for u16 {
-    fn from(x: StatusCode) -> u16 {
+    fn from(x: StatusCode) -> Self {
         use StatusCode::*;
         match x {
             Success => 0,
@@ -320,7 +320,7 @@ impl<'a> IaPrefix<'a> {
 
     /// The preferred lifetime in seconds for the prefix in this option.
     pub fn preferred_lifetime(&self) -> u32 {
-        NetworkEndian::read_u32(&self.0)
+        NetworkEndian::read_u32(self.0)
     }
 
     /// The valid lifetime in seconds for the prefix in this option.

@@ -5,9 +5,9 @@ A zero-copy DHCPv4 parser.
 [![crates.io](https://img.shields.io/crates/v/dhcparse.svg)](https://crates.io/crates/dhcparse)
 [![docs.rs](https://img.shields.io/docsrs/dhcparse)](https://docs.rs/dhcparse)
 
-This crate is suitable for writing DHCP relay agents, which only need
-to read and write a few fields, set and possibly remove a couple of
-options, before forwarding an incoming DHCP message.
+This crate is especially suitable for writing DHCP relay agents, which
+only need to read and write a few fields, set and possibly remove a
+couple of options, before forwarding an incoming DHCP message.
 
 ## Examples
 
@@ -51,8 +51,8 @@ assert_eq!(msg.options()?.count(), 1);
 
 ## Related projects
 
-* [dhcproto] is another Rust crate that parses DHCP messages into a
-  high-level representation. This may be more convenient for some
+* [dhcproto] is another Rust crate that instead parses DHCP messages
+  into an owned representation. This may be more convenient for some
   applications, but comes with the overhead of copying and heap
   allocations. For instance, the current set of dhcproto benchmarks
   would be no-ops with dhcparse.

@@ -88,7 +88,7 @@ pub const MAX_MESSAGE_SIZE: usize = 576;
 
 /// An IPv4 address.
 ///
-/// This is similar to [std::net::Ipv4Addr], but has an explicit
+/// This is similar to [`std::net::Ipv4Addr`], but has an explicit
 /// representation.
 #[derive(Clone, Copy, PartialEq, Eq, RefCast, Debug)]
 #[repr(transparent)]
@@ -117,7 +117,7 @@ impl From<Addr> for std::net::Ipv4Addr {
 #[cfg(feature = "std")]
 impl From<std::net::Ipv4Addr> for Addr {
     #[inline]
-    fn from(x: std::net::Ipv4Addr) -> Addr {
+    fn from(x: std::net::Ipv4Addr) -> Self {
         Addr(x.octets())
     }
 }
@@ -719,14 +719,16 @@ impl Default for Message<[u8; 241]> {
 impl<T: AsRef<[u8]>> Message<T> {
     /// Constructs a new view from an underlying message buffer.
     ///
-    /// Returns an error if the length of the buffer is smaller than
-    /// any valid message.
+    /// # Errors
+    ///
+    /// If the length of the buffer is smaller than any valid message,
+    /// then an error is returned.
     #[inline]
-    pub fn new(b: T) -> Result<Message<T>, Error> {
+    pub fn new(b: T) -> Result<Self, Error> {
         if b.as_ref().len() < OPTIONS_FIELD_OFFSET + MAGIC_COOKIE.len() + 4 {
             return Err(Error::Underflow);
         }
-        Ok(Message(b))
+        Ok(Self(b))
     }
 
     /// Gets the 'op' field (message type).
@@ -808,21 +810,17 @@ impl<T: AsRef<[u8]>> Message<T> {
     /// Returns the optional server host name.
     pub fn sname(&self) -> Result<&[u8], Error> {
         let data = self.as_ref();
-        if let Some(nul_pos) = memchr(0, &data[SNAME_FIELD_OFFSET..][..64]) {
-            Ok(&data[SNAME_FIELD_OFFSET..][..nul_pos])
-        } else {
-            Err(Error::BadNull)
-        }
+        memchr(0, &data[SNAME_FIELD_OFFSET..][..64])
+            .map(|nul_pos| &data[SNAME_FIELD_OFFSET..][..nul_pos])
+            .ok_or(Error::BadNull)
     }
 
     /// Returns the boot file name.
     pub fn file(&self) -> Result<&[u8], Error> {
         let data = self.as_ref();
-        if let Some(nul_pos) = memchr(0, &data[FILE_FIELD_OFFSET..][..128]) {
-            Ok(&data[FILE_FIELD_OFFSET..][..nul_pos])
-        } else {
-            Err(Error::BadNull)
-        }
+        memchr(0, &data[FILE_FIELD_OFFSET..][..128])
+            .map(|nul_pos| &data[FILE_FIELD_OFFSET..][..nul_pos])
+            .ok_or(Error::BadNull)
     }
 
     /// Returns an iterator over the DHCP options.
@@ -850,18 +848,18 @@ impl<T: AsMut<[u8]>> Message<T> {
 
     /// Sets the 'xid' field.
     pub fn set_xid(&mut self, xid: u32) {
-        NetworkEndian::write_u32(&mut self.as_mut()[4..], xid)
+        NetworkEndian::write_u32(&mut self.as_mut()[4..], xid);
     }
 
     /// Sets the 'secs' field.
     pub fn set_secs(&mut self, secs: u16) {
-        NetworkEndian::write_u16(&mut self.as_mut()[8..], secs)
+        NetworkEndian::write_u16(&mut self.as_mut()[8..], secs);
     }
 
     /// Sets the 'flags' field.
     #[inline]
     pub fn set_flags(&mut self, flags: Flags) {
-        NetworkEndian::write_u16(&mut self.as_mut()[10..], flags.bits())
+        NetworkEndian::write_u16(&mut self.as_mut()[10..], flags.bits());
     }
 
     /// Returns a mutable reference to the 'ciaddr' field.
@@ -891,6 +889,11 @@ impl<T: AsMut<[u8]>> Message<T> {
     /// Sets the 'chaddr' field.
     ///
     /// This setter also updates the length stored in the 'hlen' field.
+    ///
+    /// # Errors
+    ///
+    /// If the provided hardware address is longer than the maximum
+    /// length of 16 bytes, then an error is returned.
     #[inline]
     pub fn set_chaddr(&mut self, chaddr: &[u8]) -> Result<(), Error> {
         self.as_mut()[28..][..16]

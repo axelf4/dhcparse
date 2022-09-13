@@ -1,6 +1,6 @@
 [package]
 name = "dhcparse"
-version = "1.0.0-alpha"
+version = "1.0.0"
 authors = ["Axel Forsman <axelsfor@gmail.com>"]
 edition = "2021"
 description = "A zero-copy DHCPv4 parser"
