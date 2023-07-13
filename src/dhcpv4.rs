@@ -70,9 +70,9 @@ See:
 use bitflags::bitflags;
 use byteorder::{ByteOrder, NetworkEndian};
 use core::convert::{TryFrom, TryInto};
+use core::ffi::CStr;
 use core::iter::FusedIterator;
 use core::{fmt, mem, slice};
-use memchr::memchr;
 use ref_cast::RefCast;
 
 use crate::{Cursor, Error};
@@ -475,7 +475,7 @@ impl<'a> DhcpOption<'a> {
         ))
     }
 
-    fn write<'buf>(&self, cursor: &mut Cursor<'buf>) -> Result<(), Error> {
+    fn write(&self, cursor: &mut Cursor<'_>) -> Result<(), Error> {
         use DhcpOption::*;
         cursor.write_u8(self.code())?;
         match *self {
@@ -504,7 +504,7 @@ impl<'a> DhcpOption<'a> {
                 let xs = unsafe {
                     slice::from_raw_parts(
                         addrs as *const [Addr] as *const u8,
-                        addrs.len() * mem::size_of::<Addr>(),
+                        mem::size_of_val(addrs),
                     )
                 };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
@@ -537,7 +537,7 @@ impl<'a> DhcpOption<'a> {
                 let xs = unsafe {
                     slice::from_raw_parts(
                         addr_pairs as *const [[Addr; 2]] as *const u8,
-                        addr_pairs.len() * mem::size_of::<[Addr; 2]>(),
+                        mem::size_of_val(addr_pairs),
                     )
                 };
                 cursor.write_u8(xs.len().try_into().map_err(|_| Error::TooLong)?)?;
@@ -808,19 +808,15 @@ impl<T: AsRef<[u8]>> Message<T> {
     }
 
     /// Returns the optional server host name.
-    pub fn sname(&self) -> Result<&[u8], Error> {
+    pub fn sname(&self) -> Result<&CStr, Error> {
         let data = self.as_ref();
-        memchr(0, &data[SNAME_FIELD_OFFSET..][..64])
-            .map(|nul_pos| &data[SNAME_FIELD_OFFSET..][..nul_pos])
-            .ok_or(Error::BadNull)
+        CStr::from_bytes_until_nul(&data[SNAME_FIELD_OFFSET..][..64]).map_err(|_| Error::BadNull)
     }
 
     /// Returns the boot file name.
-    pub fn file(&self) -> Result<&[u8], Error> {
+    pub fn file(&self) -> Result<&CStr, Error> {
         let data = self.as_ref();
-        memchr(0, &data[FILE_FIELD_OFFSET..][..128])
-            .map(|nul_pos| &data[FILE_FIELD_OFFSET..][..nul_pos])
-            .ok_or(Error::BadNull)
+        CStr::from_bytes_until_nul(&data[FILE_FIELD_OFFSET..][..128]).map_err(|_| Error::BadNull)
     }
 
     /// Returns an iterator over the DHCP options.
